@@ -9,7 +9,6 @@ import sklearn.metrics
 from SRAM_dataset import SRAMDataset
 from focal_loss_pytorch.focalloss import FocalLoss
 import copy
-from imblearn.over_sampling import SMOTE, ADASYN
 from collections import Counter
 
 def plot_confmat(y_true, y_pred, metrics, pltname):
@@ -59,6 +58,7 @@ def evaluation(shg, bg, h_dict, model_list: nn.ModuleList()):
         return logits, dst_h
     # return validation(logits, targets, mask, pltname)
 
+""" Only be used in debugging """
 def print_params(model_list: nn.ModuleList()):
     # for model in model_list:
     for name, params in model_list[0].named_parameters():
@@ -228,16 +228,19 @@ def evaluation_caps(h, model):
         logits = model(h)
         return logits
 
-def train_cap(dataset, net_h, model, cmask, category):
+def train_cap(dataset, net_h, model, cmask_train, cmask_test, category):
     net_h = torch.cat([net_h, dataset._n_feat], dim=1)
     # net_h = dataset._n_feat
-    net_h = net_h[cmask]
+    net_h_test = net_h[cmask_test]
+    net_h = net_h[cmask_train]
     # we may train samples from multiple classes 
-    targets = dataset.get_targets()[cmask]
+    targets = dataset.get_targets()[cmask_train]
+    targets_test = dataset.get_targets()[cmask_test]
     # define train/val samples, loss function and optimizer
     test_mask = dataset.get_test_mask()
     # here we test only one class 
-    test_mask = test_mask[cmask]
+    # test_mask = test_mask[cmask_train]
+    test_mask = test_mask[cmask_test]
     loss_fcn = ud_loss
     optimizer = torch.optim.Adam([{'params' : model.parameters()}], lr=5e-3, weight_decay=5e-4)
     best_val_loss = torch.inf
@@ -251,10 +254,10 @@ def train_cap(dataset, net_h, model, cmask, category):
         model.train()
         optimizer.zero_grad()
         logits = model(net_h)
-        val_mask, train_mask = dataset.get_val_mask(test_mask)
+        val_mask, train_mask = dataset.get_val_mask(dataset.get_test_mask()[cmask_train])
+
         # print('train#samples:', train_mask.sum().item(), 'val#samples:', val_mask.sum().item(), \
         #       'test#samples:', test_mask.sum().item())
-        # print('max targets in training:', targets[train_mask].max().item())
         loss = loss_fcn(logits[train_mask], targets[train_mask])
         val_loss = loss.item()
         loss.backward()
@@ -274,8 +277,8 @@ def train_cap(dataset, net_h, model, cmask, category):
             val_metrics = metrics
             bad_count = 0
             print('Testing...')
-            logits = evaluation_caps(net_h, model)
-            test_metrics = validation_caps(logits, targets, test_mask, category,
+            logits = evaluation_caps(net_h_test, model)
+            test_metrics = validation_caps(logits, targets_test, test_mask, category,
                                            "err_in_eval_"+str(category))
             print("|| test metrics | mean error {:.2f}%  | max error {:.2f}% ||"
                   .format(test_metrics['mean_err']*100, test_metrics['max_err']*100))
@@ -293,12 +296,6 @@ def train_cap(dataset, net_h, model, cmask, category):
     print("|* test metrics | mean error {:.2f}% | max error {:.2f}% | #samples: {:d} *|"
           .format(test_metrics['mean_err']*100, test_metrics['max_err']*100, test_mask.sum()))
     return test_metrics
-
-def generate_samples(h, feat, targets, labels):
-        h = torch.cat([h, feat], dim=1)
-        h_res, labels_res = SMOTE().fit_resample(h, labels)
-        print(sorted(Counter(labels_res).items()))
-        return h_res, labels_res
 
 
 if __name__ == '__main__':
@@ -320,7 +317,7 @@ if __name__ == '__main__':
     for i in range(1):
         """ projection layer model """ 
         model_list = nn.ModuleList()
-        model_list.append(Hete2HomoLayer(linear_dict, act=nn.ReLU(), has_l2norm=False, has_bn=True, dropout=0.2).to(device))
+        model_list.append(Hete2HomoLayer(linear_dict, act=nn.ReLU(), has_l2norm=False, has_bn=False, dropout=0.2).to(device))
 
         """ create GNN model """   
         model_list.append(GCN(proj_feat, gnn_feat, gnn_feat, dropout=0.2).to(device))
@@ -333,16 +330,16 @@ if __name__ == '__main__':
         # model_list.append(mlp_block(mlp_feat, 2, nonlinear=None, use_bn=True))
         
         """ model training """
-        print('Training...')
-        train(dataset, model_list)
-        # torch.save(model_list, "data/models/"+name+".pt")
-        assert 0
+        # print('Training...')
+        # train(dataset, model_list)
+        # # torch.save(model_list, "data/models/"+name+".pt")
+        # assert 0
         # """ models saving """
         # name = '_'.join(model.__class__.__name__ for model in model_list)
         # name = 'Hete2HomoLayer_GraphSAGE_MLPN_acc_0.96_f1_weighted_0.96_f1_macro_0.92_acc_0.98_f1_weighted_0.98_f1_macro_0.97_295'
-        name = 'Hete2HomoLayer_GraphSAGE_MLPN_acc_0.98_f1_weighted_0.98_f1_macro_0.93_acc_0.92_f1_weighted_0.92_f1_macro_0.94_183'
+        # name = 'Hete2HomoLayer_GraphSAGE_MLPN_acc_0.98_f1_weighted_0.98_f1_macro_0.93_acc_0.92_f1_weighted_0.92_f1_macro_0.94_183'
         # name = 'Hete2HomoLayer_GraphSAGE_MLPN_acc_0.97_f1_weighted_0.97_f1_macro_0.86_acc_0.98_f1_weighted_0.98_f1_macro_0.84_238'
-        # name = 'Hete2HomoLayer_GraphSAGE_MLPN_acc_0.93_f1_weighted_0.93_f1_macro_0.80_acc_0.92_f1_weighted_0.92_f1_macro_0.86_150'
+        name = 'Hete2HomoLayer_GraphSAGE_MLPN_acc_0.93_f1_weighted_0.93_f1_macro_0.80_acc_0.92_f1_weighted_0.92_f1_macro_0.86_150'
         # name = 'Hete2HomoLayer_GraphSAGE_MLPN_baseConf'
         # load classifier
         model_list_ld = torch.load("data/models/"+name+".pt")
@@ -356,21 +353,20 @@ if __name__ == '__main__':
                                    dataset.get_feat_dict(), model_list_ld)
         mask = torch.ones(dataset._num_n, dtype=torch.bool)
         mask[dataset._zero_idx] = False
-        name = '_'.join(model.__class__.__name__ for model in model_list)
+        name = '_'.join(model.__class__.__name__ for model in model_list_ld)
         metrics = validation(logits, dataset.get_labels(), mask, name+"_conf_matrix_infr")
         print("|| inference metrics | mean accuracy {:.2f}%  | weighted f1 score {:.2f} | f1 macro {:.2f} ||"
               .format(metrics['acc']*100, metrics['f1_weighted'], metrics['f1_macro']))
-        # assert 0
+
         class_distr = torch.zeros(dataset._num_classes)
         for i in range(dataset._num_classes):
             class_distr[i] = (logits.argmax(dim=1).squeeze() == i).sum().long()
         print('predicted distr:', class_distr)
-        # assert 0
 
         """ Define regression models """
         model_list_c = nn.ModuleList()
         for i in range(dataset._num_classes):
-            mlp_feats = [64, 32]
+            mlp_feats = [128, 64, 32]
             model_list_c.append(MLPN(dataset._n_feat_dim+gnn_feat, mlp_feats, 1, 
             # model_list_c.append(MLPN(dataset._n_feat_dim, mlp_feats, 1, 
                                      act=nn.ReLU(), use_bn=False, has_l2norm=False, 
@@ -379,18 +375,21 @@ if __name__ == '__main__':
         """ model training """
         mean_err = torch.zeros(dataset._num_classes)
         max_err = torch.zeros(dataset._num_classes)
-        
+        class_merge = [[0,1], [0,1], [1,2], [2,3], [3,4]]
         for i in range(dataset._num_classes):
             print('Training class {:d} ...'.format(i))
             model = model_list_c[i]
-            class_mask = logits.argmax(dim=1).squeeze() == i
-            test_metrics = train_cap(dataset, net_h, model, class_mask, i)
+            class_mask_train = torch.zeros(net_h.shape[0], dtype=torch.bool)
+            for class_idx in class_merge[i]:
+                class_mask_train |= (logits.argmax(dim=1).squeeze() == class_idx)
+            class_mask_test = logits.argmax(dim=1).squeeze() == i
+            test_metrics = train_cap(dataset, net_h, model, class_mask_train, class_mask_test, i)
             mean_err[i] = test_metrics['mean_err']
             max_err[i] = test_metrics['max_err']
 
         print('mean_err:', mean_err, 'avg:', mean_err.mean())
         print('max_err:', max_err, 'avg:', max_err.mean())
-        torch.save(model_list_c, "data/models/5_MLPs_2.pt")
+        torch.save(model_list_c, "data/models/5_MLPs_m3.pt")
         assert 0
 
         model_list_c = torch.load("data/models/5_MLPs_2.pt")
