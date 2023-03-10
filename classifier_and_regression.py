@@ -77,7 +77,7 @@ def classifier_save(model_list: nn.ModuleList(), val_metrics=None, test_metrics=
         torch.save(model_list, "data/models/"+name+"_"+val_results+
                             "_"+test_results+"_"+str(epoch)+".pt")
     else:
-        torch.save(model_list, "data/models/"+name+"_baseConf.pt")
+        torch.save(model_list, "data/models/"+name+".pt")
 
 def train(dataset: SRAMDataset, model_list: nn.ModuleList()):
     shg = dataset._shg
@@ -161,7 +161,7 @@ def train(dataset: SRAMDataset, model_list: nn.ModuleList()):
                 best_count = 0
             model_list_cp = copy.deepcopy(model_list)
         # training this model at leat (200+patience) times
-        elif epoch > 100:
+        elif epoch > 200:
             bad_count += 1 
         
         if bad_count > patience:
@@ -306,7 +306,7 @@ if __name__ == '__main__':
     ### feature of instances transform ###
     proj_h_feat = 64
     proj_feat = 64
-    gnn_h_feat = 128
+    gnn_h_feat = 64
     gnn_feat = 64
     out_feat = dataset._num_classes
     mlp_feats = [64, 64]
@@ -320,7 +320,7 @@ if __name__ == '__main__':
         model_list.append(Hete2HomoLayer(linear_dict, act=nn.ReLU(), has_l2norm=False, has_bn=False, dropout=0.2).to(device))
 
         """ create GNN model """   
-        model_list.append(GCN(proj_feat, gnn_feat, gnn_feat, dropout=0.2).to(device))
+        model_list.append(GCN(proj_feat, gnn_h_feat, gnn_feat, dropout=0.2).to(device))
         # model_list.append(GAT(proj_feat, gnn_feat, gnn_feat, heads=[4, 4, 1], feat_drop=0.0, attn_drop=0.0).to(device))
         # model_list.append(GATv2(1, proj_feat, gnn_feat, gnn_feat, [4, 4, 1], nn.ReLU(), feat_drop=0.0, attn_drop=0.0, negative_slope=0.2, residual=False))
         # model_list.append(GraphSAGE(proj_feat, gnn_h_feat, gnn_feat, 1, activation=nn.ReLU(), dropout=0.0, aggregator_type="mean"))
@@ -339,8 +339,10 @@ if __name__ == '__main__':
         # name = 'Hete2HomoLayer_GraphSAGE_MLPN_acc_0.96_f1_weighted_0.96_f1_macro_0.92_acc_0.98_f1_weighted_0.98_f1_macro_0.97_295'
         # name = 'Hete2HomoLayer_GraphSAGE_MLPN_acc_0.98_f1_weighted_0.98_f1_macro_0.93_acc_0.92_f1_weighted_0.92_f1_macro_0.94_183'
         # name = 'Hete2HomoLayer_GraphSAGE_MLPN_acc_0.97_f1_weighted_0.97_f1_macro_0.86_acc_0.98_f1_weighted_0.98_f1_macro_0.84_238'
-        name = 'Hete2HomoLayer_GraphSAGE_MLPN_acc_0.93_f1_weighted_0.93_f1_macro_0.80_acc_0.92_f1_weighted_0.92_f1_macro_0.86_150'
-        # name = 'Hete2HomoLayer_GraphSAGE_MLPN_baseConf'
+        # name = 'Hete2HomoLayer_GraphSAGE_MLPN_acc_0.93_f1_weighted_0.93_f1_macro_0.80_acc_0.92_f1_weighted_0.92_f1_macro_0.86_150'
+        # name = 'Hete2HomoLayer_GCN_MLPN_acc_0.90_f1_weighted_0.90_f1_macro_0.88_acc_0.90_f1_weighted_0.90_f1_macro_0.89_245'
+        # name = 'Hete2HomoLayer_GCN_MLPN_acc_0.96_f1_weighted_0.96_f1_macro_0.90_acc_0.97_f1_weighted_0.97_f1_macro_0.93_277'
+        name = 'Hete2HomoLayer_GCN_MLPN_acc_0.98_f1_weighted_0.98_f1_macro_0.94_acc_0.95_f1_weighted_0.95_f1_macro_0.93_158'
         # load classifier
         model_list_ld = torch.load("data/models/"+name+".pt")
         # print(model_list_ld)
@@ -357,7 +359,7 @@ if __name__ == '__main__':
         metrics = validation(logits, dataset.get_labels(), mask, name+"_conf_matrix_infr")
         print("|| inference metrics | mean accuracy {:.2f}%  | weighted f1 score {:.2f} | f1 macro {:.2f} ||"
               .format(metrics['acc']*100, metrics['f1_weighted'], metrics['f1_macro']))
-
+        # do statistics for the sample distribution
         class_distr = torch.zeros(dataset._num_classes)
         for i in range(dataset._num_classes):
             class_distr[i] = (logits.argmax(dim=1).squeeze() == i).sum().long()
@@ -366,7 +368,7 @@ if __name__ == '__main__':
         """ Define regression models """
         model_list_c = nn.ModuleList()
         for i in range(dataset._num_classes):
-            mlp_feats = [128, 64, 32]
+            mlp_feats = [64, 32]
             model_list_c.append(MLPN(dataset._n_feat_dim+gnn_feat, mlp_feats, 1, 
             # model_list_c.append(MLPN(dataset._n_feat_dim, mlp_feats, 1, 
                                      act=nn.ReLU(), use_bn=False, has_l2norm=False, 
@@ -375,13 +377,13 @@ if __name__ == '__main__':
         """ model training """
         mean_err = torch.zeros(dataset._num_classes)
         max_err = torch.zeros(dataset._num_classes)
-        class_merge = [[0,1], [0,1], [1,2], [2,3], [3,4]]
+        # class_merge = [[0,1], [0,1], [1,2], [2,3], [3,4]]
         for i in range(dataset._num_classes):
             print('Training class {:d} ...'.format(i))
             model = model_list_c[i]
             class_mask_train = torch.zeros(net_h.shape[0], dtype=torch.bool)
-            for class_idx in class_merge[i]:
-                class_mask_train |= (logits.argmax(dim=1).squeeze() == class_idx)
+            # for class_idx in class_merge[i]:
+            class_mask_train |= logits.argmax(dim=1).squeeze() == i
             class_mask_test = logits.argmax(dim=1).squeeze() == i
             test_metrics = train_cap(dataset, net_h, model, class_mask_train, class_mask_test, i)
             mean_err[i] = test_metrics['mean_err']
@@ -389,7 +391,7 @@ if __name__ == '__main__':
 
         print('mean_err:', mean_err, 'avg:', mean_err.mean())
         print('max_err:', max_err, 'avg:', max_err.mean())
-        torch.save(model_list_c, "data/models/5_MLPs_m3.pt")
+        torch.save(model_list_c, "data/models/5_MLPs_gcn2.pt")
         assert 0
 
         model_list_c = torch.load("data/models/5_MLPs_2.pt")
