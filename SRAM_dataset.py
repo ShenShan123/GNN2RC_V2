@@ -76,8 +76,9 @@ class SRAMDataset(DGLDataset):
         # print('g.edges:', g.edges(form='all'))
         g = g.int()
         bg = dgl.to_bidirected(g, copy_ndata=False)
-        self._bg = bg
-        self._shg = shg
+        
+        self._bg = dgl.reorder_graph(bg)
+        # self._shg = shg
 
         # normalize the feature with the maximum values
         def feat_norm(x):
@@ -102,21 +103,29 @@ class SRAMDataset(DGLDataset):
         self._zero_idx = torch.nonzero(zero_idc).squeeze()
         max_l, max_i = torch.max(self._targets, dim=0)
         min_l, min_i = torch.min(self._targets[~zero_idc], dim=0)
-        print('targets size:', self._targets.shape, 
-              'max labels:', max_l.item(), 'with index:', max_i.item(), 
-              'min labels:', min_l.item(), 'with index:', min_i.item(),
-              'num of zero indeces:', self._zero_idx.shape[0])
+        print('targets size:', self._targets.shape) 
+        print('max labels:{:.2f} with index:{:d}; min labels:{:.2f} with index:{:d}'
+              .format(max_l.item(), max_i.item(), min_l.item(),min_i.item()))
+        print('num of zero cap indeces:', self._zero_idx.shape[0])
         # classificating according to the magnitude of the net capacitance
         self._num_classes = 5
         self._labels = None
-        # self._labels = self.get_labels()
+        self.get_labels()
 
         ### set the training and testing masks ###
-        _, test_idx = train_test_split(list(range(self._num_n)), test_size=0.2, 
+        train_idx, self._test_nids = train_test_split(list(range(self._num_n)), test_size=0.2, 
                                                random_state=42, stratify=self._labels)
+        self._train_nids, self._val_nids = train_test_split(train_idx, test_size=0.25, 
+                                               random_state=22, stratify=self._labels[train_idx])
         self._test_mask = torch.zeros(self._num_n, dtype=torch.bool)
-        self._test_mask[test_idx] = True
+        self._train_mask = torch.zeros(self._num_n, dtype=torch.bool)
+        self._val_mask = torch.zeros(self._num_n, dtype=torch.bool)
+        self._test_mask[self._test_nids] = True
         self._test_mask[self._zero_idx] = False
+        self._train_mask[self._train_nids] = True
+        self._train_mask[self._zero_idx] = False
+        self._val_mask[self._val_nids] = True
+        self._val_mask[self._zero_idx] = False
         return
 
     def get_val_mask(self, test_mask):
@@ -135,6 +144,12 @@ class SRAMDataset(DGLDataset):
     
     def get_test_mask(self):
         return self._test_mask
+    
+    def get_masks(self):
+        return self._train_mask, self._val_mask, self._test_mask
+    
+    def get_nids(self):
+        return torch.tensor(self._train_nids, dtype=torch.int32), torch.tensor(self._val_nids, dtype=torch.int32), torch.tensor(self._test_nids, dtype=torch.int32)
     
     def get_feat_dict(self):
         return {'device': self._d_feat, 'inst': self._i_feat, 'net': self._n_feat}

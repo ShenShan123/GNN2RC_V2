@@ -37,7 +37,7 @@ class Hete2HomoLayer(nn.Module):
         trans_h = torch.cat([value for _, value in trans_h_dict.items()], dim=0)
         return trans_h
     '''
-    def forward(self, shg, h_dict: torch.Tensor) -> torch.Tensor:
+    def forward(self, h_dict: torch.Tensor) -> torch.Tensor:
         # print("h_dict after:", [(key, h.shape) for key, h in h_dict.items()])
         trans_h_dict = self.layers(h_dict)
         # print("trans_h_dict:", [(key, h.shape) for key, h in trans_h_dict.items()])
@@ -54,12 +54,12 @@ class GCN(nn.Module):
         self.layers.append(dgl.nn.GraphConv(hid_size, out_size))
         self.dropout = nn.Dropout(dropout)
 
-    def forward(self, g, features):
+    def forward(self, blocks, features):
         h = features
         for i, layer in enumerate(self.layers):
-            if i != 0:
+            if i != len(self.layers) - 1:
                 h = self.dropout(h)
-            h = layer(g, h)
+            h = layer(blocks[i], h)
         return h
 
 class GAT(nn.Module):
