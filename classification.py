@@ -10,7 +10,6 @@ from dgl.dataloading import DataLoader
 import dgl
 from tqdm import tqdm
 # import torch.nn.functional as F
-import time
 from datetime import datetime
 
 def plot_confmat(y_true, y_pred, metrics, pltname):
@@ -31,16 +30,13 @@ def validation(logits, targets, mask=None, pltname="conf_matrix_valid"):
     with torch.no_grad():
         # use the labels in validation set
         if mask is not None:
-            logits = logits[mask]
-        # print("logits in val")
-        # print(logits)
-        # logits_norm = F.normalize(logits, p=1, dim=1).cpu().detach().numpy()
-        # print('logits_norm:', logits_norm)
+            logits = logits[mask].cpu().detach()
             targets = targets[mask].cpu().detach().numpy()
         else:
+            logits = logits.cpu().detach()
             targets = targets.cpu().detach().numpy()
 
-        _, indices = torch.max(logits, dim=1)
+        indices = torch.argmax(logits, dim=1)
         metrics = {'acc': sklearn.metrics.accuracy_score(targets, indices),
                    'f1_weighted': sklearn.metrics.f1_score(targets, indices, average='weighted'),
                    'f1_macro': sklearn.metrics.f1_score(targets, indices, average='macro'),
@@ -94,7 +90,7 @@ def classifier_save(model_list: nn.ModuleList(), val_metrics=None, test_metrics=
     else:
         torch.save(model_list, "data/models/"+name+".pt")
 
-def plot_metric_log(metric_log: dict, date, name):
+def plot_metric_log(metric_log: dict, name):
     fig, (ax1, ax2) = plt.subplots(1, 2)
     fig.set_size_inches(25, 11)
     x = range(len(metric_log['train_loss']))
@@ -115,14 +111,14 @@ def plot_metric_log(metric_log: dict, date, name):
     ax2.plot(x, metric_log['test_f1'],'-.', label='f1')
     ax2.set_xlabel('epoch')
     ax2.set_ylabel('metrics')
-    plt.title(name+" training log", loc='left')
+    plt.title(name, loc='left')
     plt.legend()
-    plt.savefig("data/plots/train_test_epochs_" + date + ".png", dpi=500, bbox_inches='tight')
+    plt.savefig("data/plots/train_log_" + name + ".png", dpi=500, bbox_inches='tight')
     plt.close(fig)
 
 def train(dataset: SRAMDataset, model_list: nn.ModuleList(), device):
-    start_time = time.clock()
-    start_date = datetime.now().strftime("%d-%m-%Y_%H:%M:%S")
+    start_date = datetime.now()
+    print("Training classifier at " + start_date.strftime("%d-%m-%Y_%H:%M:%S"))
     bg = dataset._bg.to(device)
     h_dict = dataset.get_feat_dict()
     # h_dict = {key: value.to(device) for key, value in h_dict.items()}
@@ -132,7 +128,7 @@ def train(dataset: SRAMDataset, model_list: nn.ModuleList(), device):
     # train_mask, val_mask, test_mask = dataset.get_masks()
 
     train_nids, val_nids, test_nids = dataset.get_nids()
-    sampler = dgl.dataloading.MultiLayerFullNeighborSampler(3)
+    sampler = dgl.dataloading.MultiLayerFullNeighborSampler(len(model_list[1].layers))
     id_offset = dataset._num_d + dataset._num_i
     train_nids = (train_nids + id_offset).to(device)
     val_nids = (val_nids + id_offset).to(device)
@@ -148,9 +144,9 @@ def train(dataset: SRAMDataset, model_list: nn.ModuleList(), device):
     loss_fcn = FocalLoss(gamma=2, alpha=dataset.alpha)
     # loss_fcn = F.cross_entropy
     optimizer = torch.optim.Adam([{'params' : model.parameters()} for model in model_list], 
-                                 lr=1e-2, weight_decay=5e-4)
+                                 lr=2e-2, weight_decay=5e-4)
     max_epoch = 500
-    scheduler = torch.optim.lr_scheduler.CosineAnnealingLR(optimizer, float(max_epoch), 1e-5)
+    scheduler = torch.optim.lr_scheduler.CosineAnnealingLR(optimizer, float(max_epoch), 1e-3)
 
     best_val_loss = torch.inf
     best_test_metrics = {'acc': 0.0, 'f1_macro': 0.0, 'f1_weighted': 0.0}
@@ -174,10 +170,9 @@ def train(dataset: SRAMDataset, model_list: nn.ModuleList(), device):
         
         # train_mask = train_mask.to(device)
         val_loss = 0
-        logits = []
 
         ### inner loop: train batches ###
-        for input_nodes, output_nodes, blocks  in trainDataloader:
+        for input_nodes, output_nodes, blocks  in tqdm(trainDataloader):
             # print("blocks:", blocks)
             # print("input_nodes:", input_nodes)
             # print("output_nodes:", output_nodes)
@@ -196,7 +191,6 @@ def train(dataset: SRAMDataset, model_list: nn.ModuleList(), device):
             block_logits = model_list[2](dst_h)
 
             block_nids = (output_nodes - id_offset).long()
-            logits.append(block_logits.cpu().detach())
             # block_train_mask = train_mask[block_nids]
             block_labels = labels[block_nids]#.to(device)
             loss = loss_fcn(block_logits, block_labels.squeeze())
@@ -205,7 +199,6 @@ def train(dataset: SRAMDataset, model_list: nn.ModuleList(), device):
             optimizer.step()
             # end for
         scheduler.step()
-        logits = torch.cat(logits, dim=0)
         
         ### do validations and evaluations ###
         for i, model in enumerate(model_list):
@@ -243,9 +236,9 @@ def train(dataset: SRAMDataset, model_list: nn.ModuleList(), device):
             metric_log['test_epoch'].append(epoch)
             metric_log['test_acc'].append(test_metrics['acc'])
             metric_log['test_f1'].append(metrics['f1_macro'])
-            metric_log['time'] = (time.clock() - start_time) / 3600
-            print("|| training time {:.2f}h | mean accuracy {:.2f}%  | weighted f1 score {:.2f} | f1 macro {:.2f} ||"
-                  .format(metric_log['time'], test_metrics['acc']*100, 
+            metric_log['time'] = (datetime.now() - start_date)
+            print("|| training time {:s} | mean accuracy {:.2f}%  | weighted f1 score {:.2f} | f1 macro {:.2f} ||"
+                  .format(str(metric_log['time']), test_metrics['acc']*100, 
                           test_metrics['f1_weighted'], test_metrics['f1_macro']))
             
             # keep track the best testing result
@@ -269,12 +262,13 @@ def train(dataset: SRAMDataset, model_list: nn.ModuleList(), device):
             print("Ending training ...")
             break
 
-        plot_metric_log(metric_log, start_date, name)
+        plot_metric_log(metric_log, name+'_'+start_date.strftime("%d-%m-%Y_%H:%M:%S"))
         # end training epoch
     
     classifier_save(model_list_cp)
-    print("|* Min loss epoch:{:d} | loss: {:.4f} | train hours: {:.2f} *|" \
-          .format(best_loss_epoch, best_loss, metric_log['time']))
+    end_date = datetime.now().strftime("%d-%m-%Y_%H:%M:%S")
+    print("|* Min loss epoch:{:d} | loss: {:.4f} | train hours: {:s} | end time:{:s} *|" \
+          .format(best_loss_epoch, best_loss, str(metric_log['time']), end_date))
     print("|* Best validation metrics | mean accuracy {:.2f}%  | weighted f1 score {:.2f} | f1 macro {:.2f} *|"
           .format(best_loss_metrics['acc']*100, best_loss_metrics['f1_weighted'], best_loss_metrics['f1_macro']))
     print("|* Best epoch:{:d} loss: {:.4f} *|" \

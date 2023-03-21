@@ -6,7 +6,7 @@ from regression import train_cap
 from classification import train, validation, evaluation
 
 if __name__ == '__main__':
-    device = torch.device('cuda:6' if torch.cuda.is_available() else 'cpu')
+    device = torch.device('cuda:5' if torch.cuda.is_available() else 'cpu')
     # device = torch.device('cpu')
     dataset = SRAMDataset(name='sandwich', raw_dir='/data1/shenshan/RCpred')
     # assert 0
@@ -27,16 +27,15 @@ if __name__ == '__main__':
         model_list.append(Hete2HomoLayer(linear_dict, act=nn.ReLU(), has_bn=True, has_l2norm=False, dropout=0.1).to(device))
 
         """ create GNN model """   
-        model_list.append(GCN(proj_feat, gnn_h_feat, gnn_feat, dropout=0.1).to(device))
+        # model_list.append(GCN(proj_feat, gnn_h_feat, gnn_feat, dropout=0.1).to(device))
         # model_list.append(GAT(proj_feat, gnn_feat, gnn_feat, heads=[4, 4, 1], feat_drop=0.0, attn_drop=0.0).to(device))
-        # model_list.append(GATv2(1, proj_feat, gnn_feat, gnn_feat, [4, 4, 1], nn.ReLU(), feat_drop=0.0, attn_drop=0.0, negative_slope=0.2, residual=False))
-        # model_list.append(GraphSAGE(proj_feat, gnn_h_feat, gnn_feat, 1, activation=nn.ReLU(), dropout=0.1, aggregator_type="mean"))
+        # model_list.append(GATv2(1, proj_feat, gnn_feat, gnn_feat, [4, 4, 1], nn.ReLU(), feat_drop=0.0, attn_drop=0.0, negative_slope=0.2, residual=False).to(device))
+        model_list.append(GraphSAGE(proj_feat, gnn_h_feat, gnn_feat, 1, activation=nn.ReLU(), dropout=0.1, aggregator_type="mean").to(device))
         
         """ MLP model """
         model_list.append(MLPN(gnn_feat, mlp_feats, out_feat, act=nn.ReLU(), use_bn=True, has_l2norm=False, dropout=0.1).to(device))
 
         """ model training """
-        print('Training...')
         train(dataset, model_list, device)
         # torch.save(model_list, "data/models/"+name+".pt")
         assert 0

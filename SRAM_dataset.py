@@ -117,6 +117,8 @@ class SRAMDataset(DGLDataset):
                                                random_state=42, stratify=self._labels)
         self._train_nids, self._val_nids = train_test_split(train_idx, test_size=0.25, 
                                                random_state=22, stratify=self._labels[train_idx])
+        print('# of train/val/test samples:{:d}/{:d}/{:d}'
+              .format(len(self._train_nids), len(self._val_nids), len(self._test_nids)))
         self._test_mask = torch.zeros(self._num_n, dtype=torch.bool)
         self._train_mask = torch.zeros(self._num_n, dtype=torch.bool)
         self._val_mask = torch.zeros(self._num_n, dtype=torch.bool)

@@ -146,12 +146,12 @@ class GraphSAGE(nn.Module):
         # output layer
         self.layers.append(dgl.nn.SAGEConv(n_hidden, n_classes, aggregator_type)) # activation None
 
-    def forward(self, graph, inputs):
-        h = self.dropout(inputs)
-        for l, layer in enumerate(self.layers):
-            h = layer(graph, h)
+    def forward(self, blocks, x):
+        h = x
+        for l, (layer, block) in enumerate(zip(self.layers, blocks)):
+            h = layer(block, h)
             if l != len(self.layers) - 1:
-                h = self.activation(h)
+                h = F.relu(h)
                 h = self.dropout(h)
         return h
 
