@@ -26,48 +26,33 @@ def plot_confmat(y_true, y_pred, metrics, pltname):
     plt.close(fig)
 
 """ quick validation in trainning epoch """
-def validation(logits, targets, mask=None, pltname="conf_matrix_valid"):
+def validation(logits, labels, mask=None, pltname="conf_matrix_valid"):
     with torch.no_grad():
         # use the labels in validation set
         if mask is not None:
             logits = logits[mask].cpu().detach()
-            targets = targets[mask].cpu().detach().numpy()
+            labels = labels[mask].cpu().detach().numpy()
         else:
             logits = logits.cpu().detach()
-            targets = targets.cpu().detach().numpy()
+            labels = labels.cpu().detach().numpy()
 
         indices = torch.argmax(logits, dim=1)
-        metrics = {'acc': sklearn.metrics.accuracy_score(targets, indices),
-                   'f1_weighted': sklearn.metrics.f1_score(targets, indices, average='weighted'),
-                   'f1_macro': sklearn.metrics.f1_score(targets, indices, average='macro'),
+        metrics = {'acc': sklearn.metrics.accuracy_score(labels, indices),
+                   'f1_weighted': sklearn.metrics.f1_score(labels, indices, average='weighted'),
+                   'f1_macro': sklearn.metrics.f1_score(labels, indices, average='macro'),
                 #    'auc': 0, #sklearn.metrics.roc_auc_score(targets, logits_norm, multi_class='ovr'),
                   }
-        plot_confmat(targets, indices, metrics, pltname)
+        plot_confmat(labels, indices, metrics, pltname)
         return metrics
 
 """ Just use in testing """
-def evaluation(dataset, dataloader, h_dict, model_list: nn.ModuleList(), device):
+def evaluation(bg, h_dict, model_list: nn.ModuleList()):
     with torch.no_grad():
-        id_offset = dataset._num_d + dataset._num_i
-        logits = []
-        net_h = []
-        for input_nodes, output_nodes, blocks in dataloader:
-            d_ids = input_nodes[input_nodes < dataset._num_d].long()
-            i_ids = input_nodes[(input_nodes >= dataset._num_d) & (input_nodes < id_offset)].long() - dataset._num_d
-            n_ids = input_nodes[input_nodes >= id_offset].long() - id_offset
-            block_h_dict = {'device': h_dict['device'][d_ids].to(device), 'inst': h_dict['inst'][i_ids].to(device),
-                            'net': h_dict['net'][n_ids].to(device)}
-            trans_h = model_list[0](block_h_dict)#[input_nodes.long()]
-            dst_h = model_list[1](blocks, trans_h)
-            block_logits = model_list[2](dst_h)
-            # block_nids = (output_nodes - id_offset).long()
-            logits.append(block_logits.cpu().detach())
-            net_h.append(dst_h.cpu().detach())
-            # print("model parameters in eval:")
-            # print_params(model_list)
-            # print("logits in eval:", logits[mask])
-        return torch.cat(logits, dim=0), torch.cat(net_h, dim=0)
-    # return validation(logits, targets, mask, pltname)
+        trans_h = model_list[0](h_dict)#[input_nodes.long()]
+        dst_h = model_list[1](bg, trans_h)
+        net_h = dst_h[-h_dict['net'].shape[0]:]
+        logits = model_list[2](net_h)
+        return logits, net_h
 
 """ Only be used in debugging """
 def print_params(model_list: nn.ModuleList()):
@@ -121,32 +106,16 @@ def train(dataset: SRAMDataset, model_list: nn.ModuleList(), device):
     print("Training classifier at " + start_date.strftime("%d-%m-%Y_%H:%M:%S"))
     bg = dataset._bg.to(device)
     h_dict = dataset.get_feat_dict()
-    # h_dict = {key: value.to(device) for key, value in h_dict.items()}
     labels = dataset.get_labels().to(device)
-    # test_mask = dataset.get_test_mask()
     # get train/validation split
-    # train_mask, val_mask, test_mask = dataset.get_masks()
-
     train_nids, val_nids, test_nids = dataset.get_nids()
-    sampler = dgl.dataloading.MultiLayerFullNeighborSampler(len(model_list[1].layers))
     id_offset = dataset._num_d + dataset._num_i
-    train_nids = (train_nids + id_offset).to(device)
-    val_nids = (val_nids + id_offset).to(device)
-    test_nids = (test_nids + id_offset).to(device)
-    trainDataloader = DataLoader(bg, train_nids, sampler, batch_size=1024, shuffle=False, 
-                            drop_last=False, device=device, num_workers=0)#, use_uva=True)
-    valDataloader = DataLoader(bg, val_nids, sampler, batch_size=1024, shuffle=False, 
-                            drop_last=False, device=device, num_workers=0)#, use_uva=True)
-    testDataloader = DataLoader(bg, test_nids, sampler, batch_size=1024, shuffle=False, 
-                            drop_last=False, device=device, num_workers=0)#, use_uva=True)
-    
-    ### define train/val samples, loss function and optimizer ###
     loss_fcn = FocalLoss(gamma=2, alpha=dataset.alpha)
     # loss_fcn = F.cross_entropy
     optimizer = torch.optim.Adam([{'params' : model.parameters()} for model in model_list], 
-                                 lr=2e-2, weight_decay=5e-4)
+                                 lr=1e-2, weight_decay=5e-4)
     max_epoch = 500
-    scheduler = torch.optim.lr_scheduler.CosineAnnealingLR(optimizer, float(max_epoch), 1e-3)
+    scheduler = torch.optim.lr_scheduler.CosineAnnealingLR(optimizer, float(max_epoch), 1e-4)
 
     best_val_loss = torch.inf
     best_test_metrics = {'acc': 0.0, 'f1_macro': 0.0, 'f1_weighted': 0.0}
@@ -161,43 +130,24 @@ def train(dataset: SRAMDataset, model_list: nn.ModuleList(), device):
                   'test_epoch':[], 'test_f1':[], 'test_acc':[], 
                   'time': 0.0}
 
-    print('  finish dataloader preparing, entering training loop...')
+    print('Entering training loop...')
 
     ### training loop ###
     for epoch in range(max_epoch):
         for i, model in enumerate(model_list):
             model.train()
-        
-        # train_mask = train_mask.to(device)
+    
         val_loss = 0
-
-        ### inner loop: train batches ###
-        for input_nodes, output_nodes, blocks  in tqdm(trainDataloader):
-            # print("blocks:", blocks)
-            # print("input_nodes:", input_nodes)
-            # print("output_nodes:", output_nodes)
+        optimizer.zero_grad()
         
-            optimizer.zero_grad()
-            d_ids = input_nodes[input_nodes < dataset._num_d].long()
-            i_ids = input_nodes[(input_nodes >= dataset._num_d) & (input_nodes < id_offset)].long() - dataset._num_d
-            n_ids = input_nodes[input_nodes >= id_offset].long() - id_offset
-            block_h_dict = {'device': h_dict['device'][d_ids].to(device), 'inst': h_dict['inst'][i_ids].to(device),
-                            'net': h_dict['net'][n_ids].to(device)}
-            
-            trans_h = model_list[0](block_h_dict)#[input_nodes.long()]
-            dst_h = model_list[1](blocks, trans_h)
-            # print('dst_h shape:', dst_h.shape)
-            # print('output_nodes shape:', output_nodes.shape)
-            block_logits = model_list[2](dst_h)
-
-            block_nids = (output_nodes - id_offset).long()
-            # block_train_mask = train_mask[block_nids]
-            block_labels = labels[block_nids]#.to(device)
-            loss = loss_fcn(block_logits, block_labels.squeeze())
-            val_loss += loss.item()
-            loss.backward()
-            optimizer.step()
-            # end for
+        trans_h = model_list[0](h_dict)
+        dst_h = model_list[1](bg, trans_h)
+        dst_h = dst_h[-h_dict['net'].shape[0]:]
+        logits = model_list[2](dst_h)[train_nids]
+        loss = loss_fcn(logits, labels[train_nids].squeeze())
+        val_loss = loss.item()
+        loss.backward()
+        optimizer.step()
         scheduler.step()
         
         ### do validations and evaluations ###
@@ -205,10 +155,8 @@ def train(dataset: SRAMDataset, model_list: nn.ModuleList(), device):
             model.eval()
 
         print('Validating...')
-        logits, _ = evaluation(dataset, valDataloader, h_dict, model_list, device)
-        metrics = validation(logits, labels[(val_nids - id_offset).long()], 
-                            #  val_mask[(train_nids - id_offset).long()], 
-                             mask=None, pltname=name+"_conf_matrix_valid")
+        logits, _ = evaluation(bg, h_dict, model_list)
+        metrics = validation(logits, labels, mask=val_nids, pltname=name+"_conf_matrix_valid")
         metric_log['train_loss'].append(val_loss)
         metric_log['val_acc'].append(metrics['acc'])
         metric_log['val_f1'].append(metrics['f1_macro'])
@@ -230,9 +178,9 @@ def train(dataset: SRAMDataset, model_list: nn.ModuleList(), device):
             
             bad_count = 0
             print('Testing...')
-            logits, _ = evaluation(dataset, testDataloader, h_dict, model_list, device)
-            test_metrics = validation(logits, labels[(test_nids - id_offset).long()], 
-                                      mask=None, pltname=name+"_conf_matrix_eval")
+            logits, _ = evaluation(bg, h_dict, model_list)
+            test_metrics = validation(logits, labels, 
+                                      mask=test_nids, pltname=name+"_conf_matrix_eval")
             metric_log['test_epoch'].append(epoch)
             metric_log['test_acc'].append(test_metrics['acc'])
             metric_log['test_f1'].append(metrics['f1_macro'])

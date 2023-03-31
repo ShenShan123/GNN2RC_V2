@@ -151,7 +151,8 @@ class SRAMDataset(DGLDataset):
         return self._train_mask, self._val_mask, self._test_mask
     
     def get_nids(self):
-        return torch.tensor(self._train_nids, dtype=torch.int32), torch.tensor(self._val_nids, dtype=torch.int32), torch.tensor(self._test_nids, dtype=torch.int32)
+        # return torch.tensor(self._train_nids, dtype=torch.int32), torch.tensor(self._val_nids, dtype=torch.int32), torch.tensor(self._test_nids, dtype=torch.int32)
+        return torch.tensor(self._train_nids, dtype=torch.int64), torch.tensor(self._val_nids, dtype=torch.int64), torch.tensor(self._test_nids, dtype=torch.int64)
     
     def get_feat_dict(self):
         return {'device': self._d_feat, 'inst': self._i_feat, 'net': self._n_feat}

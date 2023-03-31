@@ -65,18 +65,18 @@ class GCN(nn.Module):
 class GAT(nn.Module):
     def __init__(self,in_size, hid_size, out_size, heads, feat_drop=0.6, attn_drop=0.6):
         super().__init__()
-        self.gat_layers = nn.ModuleList()
+        self.layers = nn.ModuleList()
         # 3-layer GAT
-        self.gat_layers.append(dgl.nn.GATConv(in_size, hid_size, heads[0], feat_drop=feat_drop, attn_drop=attn_drop, activation=F.elu))
-        self.gat_layers.append(dgl.nn.GATConv(hid_size*heads[0], hid_size, heads[1], feat_drop=feat_drop, attn_drop=attn_drop, activation=F.elu))
-        self.gat_layers.append(dgl.nn.GATConv(hid_size*heads[1], out_size, heads[2], feat_drop=feat_drop, attn_drop=attn_drop, activation=None))
+        self.layers.append(dgl.nn.GATConv(in_size, hid_size, heads[0], feat_drop=feat_drop, attn_drop=attn_drop, activation=F.elu))
+        self.layers.append(dgl.nn.GATConv(hid_size*heads[0], hid_size, heads[1], feat_drop=feat_drop, attn_drop=attn_drop, activation=F.elu))
+        self.layers.append(dgl.nn.GATConv(hid_size*heads[1], out_size, heads[2], feat_drop=feat_drop, attn_drop=attn_drop, activation=None))
         
-    def forward(self, g, inputs):
+    def forward(self, blocks, inputs):
         h = inputs
-        for i, layer in enumerate(self.gat_layers):
-            h = layer(g, h)
+        for i, layer in enumerate(self.layers):
+            h = layer(blocks[i], h)
             # print(i, "size of h:", h.shape)
-            if i == len(self.gat_layers) - 1:  # last layer 
+            if i == len(self.layers) - 1:  # last layer 
                 h = h.mean(1)
             else:       # other layer(s)
                 h = h.flatten(1)
@@ -146,10 +146,19 @@ class GraphSAGE(nn.Module):
         # output layer
         self.layers.append(dgl.nn.SAGEConv(n_hidden, n_classes, aggregator_type)) # activation None
 
-    def forward(self, blocks, x):
+    # def forward(self, blocks, x):
+    #     h = x
+    #     for l, (layer, block) in enumerate(zip(self.layers, blocks)):
+    #         h = layer(block, h)
+    #         if l != len(self.layers) - 1:
+    #             h = F.relu(h)
+    #             h = self.dropout(h)
+    #     return h
+    
+    def forward(self, g, x):
         h = x
-        for l, (layer, block) in enumerate(zip(self.layers, blocks)):
-            h = layer(block, h)
+        for l, layer in enumerate(self.layers):
+            h = layer(g, h)
             if l != len(self.layers) - 1:
                 h = F.relu(h)
                 h = self.dropout(h)
