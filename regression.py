@@ -31,11 +31,12 @@ def ud_loss(logits, targets):
     #       .format(logits[max_i].item(), targets[max_i].item(), max_loss.item(), max_i.item()))
     return loss_value
 
-def validation_caps(logits, targets, mask, category, pltname="err_in_val"):
+def validation_caps(logits, targets, category, mask=None, pltname="err_in_val"):
     with torch.no_grad():
-        # use the labels in validation set
-        logits = logits[mask]
-        targets = targets[mask]
+        if mask is not None:
+            # use the labels in validation set
+            logits = logits[mask]
+            targets = targets[mask]
         # print('logits shape:', logits.shape, 'targets shape:', targets.shape)
         err_vec = torch.abs((logits - targets) / targets).squeeze()
         # print("err_vec:", err_vec)
@@ -44,7 +45,6 @@ def validation_caps(logits, targets, mask, category, pltname="err_in_val"):
         # print("max_err:", max_err)
         plot_errors(((logits - targets) / targets).squeeze(), targets, pltname, category)
         metrics = {"mean_err": mean_err.item(), "max_err": max_err.item()}
-
         return metrics
 
 def evaluation_caps(h, model):
@@ -52,21 +52,22 @@ def evaluation_caps(h, model):
         logits = model(h)
         return logits
 
-def train_cap(dataset: SRAMDataset, net_h, model: nn.Module(), cmask_train, cmask_test, category):
+def train_cap(dataset: SRAMDataset, net_h, model: nn.Module(), cmask, category):
+    train_mask, val_mask, test_mask = dataset.get_masks()
     net_h = torch.cat([net_h, dataset._n_feat], dim=1)
     # net_h = dataset._n_feat
-    net_h_test = net_h[cmask_test]
-    net_h = net_h[cmask_train]
+    net_h_test = net_h[test_mask & cmask]
+    net_h = net_h[(train_mask | val_mask) & cmask]
     # we may train samples from multiple classes 
-    targets = dataset.get_targets()[cmask_train]
-    targets_test = dataset.get_targets()[cmask_test]
+    targets = dataset.get_targets()[(train_mask | val_mask) & cmask]
+    targets_test = dataset.get_targets()[test_mask & cmask]
     # define train/val samples, loss function and optimizer
-    test_mask = dataset.get_test_mask()
+    # test_mask = dataset.get_test_mask()
     # here we test only one class 
     # test_mask = test_mask[cmask_train]
-    test_mask = test_mask[cmask_test]
+    # test_mask = test_mask[cmask_test]
     loss_fcn = ud_loss
-    optimizer = torch.optim.Adam([{'params' : model.parameters()}], lr=5e-3, weight_decay=5e-4)
+    optimizer = torch.optim.Adam([{'params' : model.parameters()}], lr=2e-3, weight_decay=5e-4)
     best_val_loss = torch.inf
     bad_count = 0
     best_epoch = -1
@@ -78,11 +79,8 @@ def train_cap(dataset: SRAMDataset, net_h, model: nn.Module(), cmask_train, cmas
         model.train()
         optimizer.zero_grad()
         logits = model(net_h)
-        val_mask, train_mask = dataset.get_val_mask(dataset.get_test_mask()[cmask_train])
-
-        # print('train#samples:', train_mask.sum().item(), 'val#samples:', val_mask.sum().item(), \
-        #       'test#samples:', test_mask.sum().item())
-        loss = loss_fcn(logits[train_mask], targets[train_mask])
+        # loss = loss_fcn(logits[train_mask], targets[train_mask])
+        loss = loss_fcn(logits, targets)
         val_loss = loss.item()
         loss.backward()
         optimizer.step()
@@ -90,8 +88,8 @@ def train_cap(dataset: SRAMDataset, net_h, model: nn.Module(), cmask_train, cmas
         # do validations and evaluations
         model.eval()
 
-        metrics = validation_caps(logits, targets, val_mask, category,
-                                  "err_in_val_"+str(category))
+        metrics = validation_caps(logits, targets, category, mask=None, 
+                                  pltname="err_in_val_"+str(category))
         print("|| Epoch {:05d} | Loss {:.4f} | mean error {:.2f}%  | max_error {:.2f}% ||"
               .format(epoch, loss.item(), metrics['mean_err']*100, metrics['max_err']*100))
         # for ealy stop with 20 patience
@@ -102,8 +100,8 @@ def train_cap(dataset: SRAMDataset, net_h, model: nn.Module(), cmask_train, cmas
             bad_count = 0
             print('Testing...')
             logits = evaluation_caps(net_h_test, model)
-            test_metrics = validation_caps(logits, targets_test, test_mask, category,
-                                           "err_in_eval_"+str(category))
+            test_metrics = validation_caps(logits, targets_test, category, mask=None,
+                                           pltname="err_in_eval_"+str(category))
             print("|| test metrics | mean error {:.2f}%  | max error {:.2f}% ||"
                   .format(test_metrics['mean_err']*100, test_metrics['max_err']*100))
         elif epoch > 100:

@@ -113,7 +113,7 @@ def train(dataset: SRAMDataset, model_list: nn.ModuleList(), device):
     loss_fcn = FocalLoss(gamma=2, alpha=dataset.alpha)
     # loss_fcn = F.cross_entropy
     optimizer = torch.optim.Adam([{'params' : model.parameters()} for model in model_list], 
-                                 lr=1e-2, weight_decay=5e-4)
+                                 lr=1e-3, weight_decay=5e-4)
     max_epoch = 500
     scheduler = torch.optim.lr_scheduler.CosineAnnealingLR(optimizer, float(max_epoch), 1e-4)
 

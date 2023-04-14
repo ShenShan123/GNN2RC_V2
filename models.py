@@ -54,12 +54,20 @@ class GCN(nn.Module):
         self.layers.append(dgl.nn.GraphConv(hid_size, out_size))
         self.dropout = nn.Dropout(dropout)
 
-    def forward(self, blocks, features):
+    # def forward(self, blocks, features):
+    #     h = features
+    #     for i, layer in enumerate(self.layers):
+    #         if i != len(self.layers) - 1:
+    #             h = self.dropout(h)
+    #         h = layer(blocks[i], h)
+    #     return h
+    
+    def forward(self, g, features):
         h = features
         for i, layer in enumerate(self.layers):
             if i != len(self.layers) - 1:
                 h = self.dropout(h)
-            h = layer(blocks[i], h)
+            h = layer(g, h)
         return h
 
 class GAT(nn.Module):
@@ -71,10 +79,22 @@ class GAT(nn.Module):
         self.layers.append(dgl.nn.GATConv(hid_size*heads[0], hid_size, heads[1], feat_drop=feat_drop, attn_drop=attn_drop, activation=F.elu))
         self.layers.append(dgl.nn.GATConv(hid_size*heads[1], out_size, heads[2], feat_drop=feat_drop, attn_drop=attn_drop, activation=None))
         
-    def forward(self, blocks, inputs):
+    # def forward(self, blocks, inputs):
+    #     h = inputs
+    #     for i, layer in enumerate(self.layers):
+    #         h = layer(blocks[i], h)
+    #         # print(i, "size of h:", h.shape)
+    #         if i == len(self.layers) - 1:  # last layer 
+    #             h = h.mean(1)
+    #         else:       # other layer(s)
+    #             h = h.flatten(1)
+    #         # print(i, "size of h:", h.shape)
+    #     return h
+    
+    def forward(self, g, inputs):
         h = inputs
         for i, layer in enumerate(self.layers):
-            h = layer(blocks[i], h)
+            h = layer(g, h)
             # print(i, "size of h:", h.shape)
             if i == len(self.layers) - 1:  # last layer 
                 h = h.mean(1)

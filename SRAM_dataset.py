@@ -99,10 +99,10 @@ class SRAMDataset(DGLDataset):
         ### prepare the labels ###
         self._targets = shg.nodes['net'].data['y'].float() * 1000
         self.plot_targets()
-        zero_idc = self._targets == 0.0
-        self._zero_idx = torch.nonzero(zero_idc).squeeze()
+        zero_mask = self._targets == 0.0
+        self._zero_idx = torch.nonzero(zero_mask).squeeze()
         max_l, max_i = torch.max(self._targets, dim=0)
-        min_l, min_i = torch.min(self._targets[~zero_idc], dim=0)
+        min_l, min_i = torch.min(self._targets[~zero_mask], dim=0)
         print('targets size:', self._targets.shape) 
         print('max labels:{:.2f} with index:{:d}; min labels:{:.2f} with index:{:d}'
               .format(max_l.item(), max_i.item(), min_l.item(),min_i.item()))
@@ -111,23 +111,22 @@ class SRAMDataset(DGLDataset):
         self._num_classes = 5
         self._labels = None
         self.get_labels()
-
+        # here we remove the net with 0.0 cap (invalid data samples)
+        nids = torch.nonzero(~zero_mask.squeeze()).squeeze().tolist()
         ### set the training and testing masks ###
-        train_idx, self._test_nids = train_test_split(list(range(self._num_n)), test_size=0.2, 
-                                               random_state=42, stratify=self._labels)
-        self._train_nids, self._val_nids = train_test_split(train_idx, test_size=0.25, 
-                                               random_state=22, stratify=self._labels[train_idx])
-        print('# of train/val/test samples:{:d}/{:d}/{:d}'
-              .format(len(self._train_nids), len(self._val_nids), len(self._test_nids)))
+        train_nids, self._test_nids = train_test_split(nids, test_size=0.2, 
+                                               random_state=42, stratify=self._labels[nids])
+        self._train_nids, self._val_nids = train_test_split(train_nids, test_size=0.25, 
+                                               random_state=22, stratify=self._labels[train_nids])
+        
         self._test_mask = torch.zeros(self._num_n, dtype=torch.bool)
         self._train_mask = torch.zeros(self._num_n, dtype=torch.bool)
         self._val_mask = torch.zeros(self._num_n, dtype=torch.bool)
         self._test_mask[self._test_nids] = True
-        self._test_mask[self._zero_idx] = False
         self._train_mask[self._train_nids] = True
-        self._train_mask[self._zero_idx] = False
         self._val_mask[self._val_nids] = True
-        self._val_mask[self._zero_idx] = False
+        print('# of train/val/test samples:{:d}/{:d}/{:d}'
+              .format(len(self._train_nids), len(self._val_nids), len(self._test_nids)))
         return
 
     def get_val_mask(self, test_mask):
