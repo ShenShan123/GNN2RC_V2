@@ -4,3 +4,4 @@ cache/
 __pycache__/
 focal_loss_pytorch/
 *.log*
+*.ipynb

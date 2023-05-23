@@ -7,13 +7,16 @@ import numpy as np
 import warnings
 import datetime
 
-def constructGraph(structList, struIdx, ### struct list and the index of the target subckt
+def constructGraph(structList, 
+                   targets,
+                   struIdx, ### struct list and the index of the target subckt
                    id_dict, ### the global indeces (IDs) of nets and devices and subckt (also a instance)
                    portIDs, ### the instance' ports of this subckt connect the other instances
                             ### in outer level, so pass the global indeces of port nets to this subckt
                    edge_dict,
                    data_dict, ### feature data (n for 'net' d for 'device')
-                   hier_lvl  ### the hierarchy level of this subckt
+                   hier_lvl,  ### the hierarchy level of this subckt
+                   instName=None
                    ):
     curInstID = id_dict["inst"]
     subckt = structList[0, struIdx - 1] ### struIdx starts from 1 in MATLAB
@@ -29,6 +32,7 @@ def constructGraph(structList, struIdx, ### struct list and the index of the tar
     data_dict["inst"] = torch.cat((data_dict["inst"], ix), dim=0)
     #assert(hier_lvl != 3)
     portNum = subckt['portNum'][0, 0]
+    
     ### assign an index for each net in this subckt
     for j in range(netList.shape[1]):
         net = netList[0, j]
@@ -40,11 +44,29 @@ def constructGraph(structList, struIdx, ### struct list and the index of the tar
             globalNtList[j] = id_dict["net"]
             # concatenate the old feature with the new feature hier_lvl
             nx = extractNdata(net, hier_lvl)
-            ny = torch.tensor(np.array([feat_Y[id_dict["net"], 0]])).reshape([1, -1])
+            # the target net cap extracted from spf file
+            if targets is not None:
+                ny = torch.tensor(np.array([targets[id_dict["net"], 0]])).reshape([1, -1])
+                # nt = np.array(targets[id_dict["net"]])
+            else :
+                ny = torch.tensor([[-1.0],])
+                # nt = np.array(targets[id_dict["net"]])
             #print('nx shape: ', nx.shape)
             data_dict["net_x"] = torch.cat((data_dict["net_x"], nx), dim=0)
             data_dict["net_y"] = torch.cat((data_dict["net_y"], ny), dim=0)
             
+            if instName is not None:
+                netName = '.'.join([instName, net["name"][0]])
+            else:
+                netName = net["name"][0]
+            
+            # write a pre-layout netlist with pred/target net capacitance
+            if targets is not None:
+                with open('pred_c.cdl', 'a') as c_file:
+                    cap = "C" + str(id_dict["net"])
+                    line = ' '.join([cap, netName, "0", str(ny.item())+"f", "\n"])
+                    c_file.write(line)
+            # print("netName:", netName)
             id_dict["net"] = id_dict["net"] + 1
 
         ### record the net to subckt edges
@@ -84,6 +106,12 @@ def constructGraph(structList, struIdx, ### struct list and the index of the tar
             id_dict["device"] = id_dict["device"] + 1
         ### This is an instance of subckt
         else:
+            # record the name of this subcircuit instance
+            # this is for naming the internal nets in this subcircuit instance
+            if instName is not None:
+                subInstName = '.'.join([instName, inst['name'][0]])
+            else:
+                subInstName = inst['name'][0]
             subPortIDs = [-1] * ntPtr.shape[1]
             # Take the global net index to the internal net of this instance
             for i in range(ntPtr.shape[1]):
@@ -97,13 +125,15 @@ def constructGraph(structList, struIdx, ### struct list and the index of the tar
             print('enter inst:', inst['name'][0],' defined by the subckt:', \
                   structList[0, subStruIdx - 1]['name'][0], 'with instID:', \
                   id_dict["inst"], 'and port indx', subPortIDs)
-            
-            sbInstID = constructGraph(structList, subStruIdx, 
+
+            sbInstID = constructGraph(structList, targets,
+                                      subStruIdx, 
                                       id_dict,
                                       subPortIDs, 
                                       edge_dict,
                                       data_dict,
-                                      hier_lvl)
+                                      hier_lvl,
+                                      subInstName)
 
             print('return from subckt: ', 
                   structList[0, subStruIdx - 1]['name'][0],
@@ -218,25 +248,32 @@ def extractDdata(dvc, lvl):
     #print('dvc ntPtr=', dvc['ndPtr'][0,:])
     return x.reshape((1, -1))
 
-if __name__ == '__main__':
+# if __name__ == '__main__':
+def run_cir2g(datName, subcktName, feat_Y=None):
     start = datetime.datetime.now()
     print('start circuit2graph_V4 at', start)
     """ load subcircuits and transfer to a dgl-graph """
-    name = "sram_sp_8192w" #'ultra_8T' # "ultra_8T" #
-    dataPath = '/data1/shenshan/RCpred/' + name + '.sbckt.dat'
-    ### This file stores the orignal feature and the capacitance, which is Y.
-    dataPath2 = '/data1/shenshan/RCpred/' + name + '_XY.mat'
+    # name =  "array_128_32_8t" #"8T_digitized_timing_top_fast" #"sram_sp_8192w" #'ultra_8T'#
+    dataPath = '/data1/shenshan/RCpred/' + datName + '.sbckt.dat'
     data = scipy.io.loadmat(dataPath)
-    data2 = scipy.io.loadmat(dataPath2)
     print('type of structList:', type(data['structList']))
     print('shape of structList:', data['structList'].shape)
     structList = data['structList']
-    feat_X = data2['X']
-    print('shape of X:', feat_X.shape)
-    feat_Y = data2['Y']
-    print('shape of Y:', feat_Y.shape)
+
+    ### This file stores the orignal feature and the capacitance, which is Y.
+    dataPath2 = '/data1/shenshan/RCpred/' + datName + '_XY.mat'
+    try:
+        data2 = scipy.io.loadmat(dataPath2)
+        feat_X = data2['X']
+        print('shape of X:', feat_X.shape)
+        feat_Y = data2['Y']
+        print('shape of Y:', feat_Y.shape)
+    except FileNotFoundError:
+        pass
+        # feat_Y = feat_Y
+    
     # assert 0
-    subcktName = 'sram_sp_8192w' #"ultra_8T_macro" # 'pe_macro2' # 'RVBx3' #
+    # subcktName = "array_128_32_8t" #"front_8T_digitized_timing_top_256_fast" #'sram_sp_8192w' #"ultra_8T_macro" # 'pe_macro2' # 'RVBx3' #
     # subcktName = "DELAY4_PULSE" # "sa_write" #"SA" #
     edge_dict = {'d2n': ([], []), 'd2i':([], []), 'n2i':([], []), 'i2i':([], [])}
     data_dict = {}
@@ -248,10 +285,10 @@ if __name__ == '__main__':
         if structList[0, i]['name'][0] == subcktName: #'ana_buff': #
             struIdx = i + 1
             print('find subckt', i) #BUFF_PULSE
-            constructGraph(structList, struIdx, 
+            constructGraph(structList, feat_Y, struIdx, 
                         {"inst":0, "net":0, "device":0},
                         [], edge_dict, data_dict, 0)
-
+            
             for key in edge_dict:
                 src, dst = edge_dict[key]
                 print(key + "_src:", src[:100])
@@ -260,7 +297,7 @@ if __name__ == '__main__':
             print('ndata_y shape: ', data_dict["net_y"].shape)
             print('ddata_x shape: ', data_dict["device"].shape)
             print('idata_x shape: ', data_dict["inst"].shape)
-            if feat_Y.shape[0] != data_dict["net_x"].shape[0]:
+            if feat_Y is not None and (feat_Y.shape[0] != data_dict["net_x"].shape[0]):
                 warnings.warn("Number of caps doesn't match the number of nets in sub-circuits struct, leading to wrong labels of nodes in the graph !! ",
                             RuntimeWarning)
             # assert 0
@@ -285,9 +322,9 @@ if __name__ == '__main__':
             hg.nodes['device'].data['x'] = data_dict["device"]
             hg.nodes['inst'].data['x'] = data_dict["inst"]
             print('hg: ', hg)
-            gFilePath = "/data1/shenshan/RCpred/" + name + ".bi_graph.bin"
-            dgl.data.utils.save_graphs(gFilePath, [hg])
-            print('saved graph hg to', gFilePath)
+            gFilePath = "/data1/shenshan/RCpred/" + datName + ".bi_graph.bin"
+            # dgl.data.utils.save_graphs(gFilePath, [hg])
+            # print('saved graph hg to', gFilePath)
             break
     end = datetime.datetime.now()
     print('all finished at', end, ' with runtime', (end-start).seconds / 3600, 'h')

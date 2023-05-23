@@ -2,6 +2,7 @@ import torch
 import torch.nn as nn
 import matplotlib.pyplot as plt
 from SRAM_dataset import SRAMDataset
+from datetime import datetime
 
 def plot_errors(x, y, pltname, c):
     plt.grid()
@@ -53,8 +54,12 @@ def evaluation_caps(h, model):
         return logits
 
 def train_cap(dataset: SRAMDataset, net_h, model: nn.Module(), cmask, category):
+    start = datetime.now()
     train_mask, val_mask, test_mask = dataset.get_masks()
-    net_h = torch.cat([net_h, dataset._n_feat], dim=1)
+    if net_h is not None:
+        net_h = torch.cat([net_h, dataset._n_feat], dim=1)
+    else:
+        net_h = dataset._n_feat
     # net_h = dataset._n_feat
     net_h_test = net_h[test_mask & cmask]
     net_h = net_h[(train_mask | val_mask) & cmask]
@@ -98,12 +103,14 @@ def train_cap(dataset: SRAMDataset, net_h, model: nn.Module(), cmask, category):
             best_epoch = epoch
             val_metrics = metrics
             bad_count = 0
+            test_start = datetime.now()
             print('Testing...')
             logits = evaluation_caps(net_h_test, model)
             test_metrics = validation_caps(logits, targets_test, category, mask=None,
                                            pltname="err_in_eval_"+str(category))
-            print("|| test metrics | mean error {:.2f}%  | max error {:.2f}% ||"
-                  .format(test_metrics['mean_err']*100, test_metrics['max_err']*100))
+            print("|| train/test time {:s}/{:s} | mean error {:.2f}%  | max error {:.2f}% ||"
+                  .format(str(datetime.now()-start), str(datetime.now()-test_start), 
+                          test_metrics['mean_err']*100, test_metrics['max_err']*100))
         elif epoch > 100:
             bad_count += 1 
         

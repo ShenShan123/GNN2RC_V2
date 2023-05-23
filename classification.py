@@ -7,12 +7,22 @@ from SRAM_dataset import SRAMDataset
 from focal_loss_pytorch.focalloss import FocalLoss
 import copy
 from dgl.dataloading import DataLoader
-import dgl
-from tqdm import tqdm
-# import torch.nn.functional as F
+# import dgl
+# from tqdm import tqdm
+import torch.nn.functional as F
 from datetime import datetime
+import os 
+import matplotlib as mpl
 
 def plot_confmat(y_true, y_pred, metrics, pltname):
+    plt.style.use('seaborn-darkgrid')
+    # mpl.rcParams['font.sans-serif'] = ['Calibri']
+    mpl.rcParams['axes.titlesize'] = 13
+    mpl.rcParams['axes.labelsize'] = 13
+    mpl.rcParams['xtick.labelsize'] = 12
+    mpl.rcParams['ytick.labelsize'] = 12
+    mpl.rcParams['legend.fontsize'] = 12
+    mpl.rcParams['figure.figsize'] = (8.47, 4.3)
     cf_matrix = sklearn.metrics.confusion_matrix(y_true.squeeze(), y_pred, normalize='true')
     fig, ax = plt.subplots()
     ax.set_xscale('linear')
@@ -22,7 +32,8 @@ def plot_confmat(y_true, y_pred, metrics, pltname):
     ax.set_ylabel('True label')
     title = ' '.join(key + ":" + "{:.4f}".format(val) for key, val in metrics.items())
     plt.title(title)
-    plt.savefig('./data/plots/'+pltname, dpi=400)
+    # plt.savefig('./data/plots/'+pltname, dpi=400)
+    # plt.savefig("data/plots/conf_matrix_pool_infr.pdf", format="pdf", bbox_inches="tight")
     plt.close(fig)
 
 """ quick validation in trainning epoch """
@@ -67,9 +78,13 @@ def print_params(model_list: nn.ModuleList()):
 
 def classifier_save(model_list: nn.ModuleList(), val_metrics=None, test_metrics=None, epoch=None):
     name = '_'.join(model.__class__.__name__ for model in model_list)
+    if "GraphSAGE" in name:
+        name = name.replace("GraphSAGE", "GraphSAGE_"+model_list[1].layers[0]._aggre_type) 
     if val_metrics is not None:
         val_results = '_'.join(key+"_{:.2f}".format(val) for key, val in val_metrics.items())
         test_results = '_'.join(key+"_{:.2f}".format(val) for key, val in test_metrics.items())
+        # here we remove the saved models with similar results
+        os.system("rm " + "data/models/"+name+"_"+val_results+"_"+test_results+"_[0-9]*")
         torch.save(model_list, "data/models/"+name+"_"+val_results+
                             "_"+test_results+"_"+str(epoch)+".pt")
     else:
@@ -102,20 +117,20 @@ def plot_metric_log(metric_log: dict, name):
     plt.close(fig)
 
 def train(dataset: SRAMDataset, model_list: nn.ModuleList(), device):
-    start_date = datetime.now()
-    print("Training classifier at " + start_date.strftime("%d-%m-%Y_%H:%M:%S"))
+    start = datetime.now()
     bg = dataset._bg.to(device)
     h_dict = dataset.get_feat_dict()
     labels = dataset.get_labels().to(device)
     # get train/validation split
     train_nids, val_nids, test_nids = dataset.get_nids()
+    train_nids = torch.cat((train_nids, val_nids))
     id_offset = dataset._num_d + dataset._num_i
     loss_fcn = FocalLoss(gamma=2, alpha=dataset.alpha)
     # loss_fcn = F.cross_entropy
     optimizer = torch.optim.Adam([{'params' : model.parameters()} for model in model_list], 
-                                 lr=1e-3, weight_decay=5e-4)
+                                 lr=2e-3, weight_decay=5e-4)
     max_epoch = 500
-    scheduler = torch.optim.lr_scheduler.CosineAnnealingLR(optimizer, float(max_epoch), 1e-4)
+    scheduler = torch.optim.lr_scheduler.CosineAnnealingLR(optimizer, float(max_epoch), 2e-4)
 
     best_val_loss = torch.inf
     best_test_metrics = {'acc': 0.0, 'f1_macro': 0.0, 'f1_weighted': 0.0}
@@ -126,10 +141,13 @@ def train(dataset: SRAMDataset, model_list: nn.ModuleList(), device):
     patience = 25
     model_list_cp = nn.ModuleList()
     name = model_list[1].__class__.__name__
+    if name == "GraphSAGE":
+        name += "_" + model_list[1].layers[0]._aggre_type
+
     metric_log = {'train_loss':[], 'val_f1': [], 'val_acc':[], 
                   'test_epoch':[], 'test_f1':[], 'test_acc':[], 
                   'time': 0.0}
-
+    print("Training " + name + " classifier at " + start.strftime("%d-%m-%Y_%H:%M:%S"))
     print('Entering training loop...')
 
     ### training loop ###
@@ -178,16 +196,17 @@ def train(dataset: SRAMDataset, model_list: nn.ModuleList(), device):
             
             bad_count = 0
             print('Testing...')
+            test_start = datetime.now()
             logits, _ = evaluation(bg, h_dict, model_list)
             test_metrics = validation(logits, labels, 
                                       mask=test_nids, pltname=name+"_conf_matrix_eval")
             metric_log['test_epoch'].append(epoch)
             metric_log['test_acc'].append(test_metrics['acc'])
             metric_log['test_f1'].append(metrics['f1_macro'])
-            metric_log['time'] = (datetime.now() - start_date)
-            print("|| training time {:s} | mean accuracy {:.2f}%  | weighted f1 score {:.2f} | f1 macro {:.2f} ||"
-                  .format(str(metric_log['time']), test_metrics['acc']*100, 
-                          test_metrics['f1_weighted'], test_metrics['f1_macro']))
+            metric_log['time'] = (datetime.now() - start)
+            print("|| train/test time {:s}/{:s} | mean accuracy {:.2f}%  | weighted f1 score {:.2f} | f1 macro {:.2f} ||"
+                  .format(str(metric_log['time']), str(datetime.now()-test_start), 
+                          test_metrics['acc']*100, test_metrics['f1_weighted'], test_metrics['f1_macro']))
             
             # keep track the best testing result
             if best_test_metrics['f1_macro'] < test_metrics['f1_macro']:
@@ -210,7 +229,7 @@ def train(dataset: SRAMDataset, model_list: nn.ModuleList(), device):
             print("Ending training ...")
             break
 
-        plot_metric_log(metric_log, name+'_'+start_date.strftime("%d-%m-%Y_%H:%M:%S"))
+        plot_metric_log(metric_log, name+'_'+start.strftime("%d-%m-%Y_%H:%M:%S"))
         # end training epoch
     
     classifier_save(model_list_cp)
