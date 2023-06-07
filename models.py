@@ -40,7 +40,7 @@ class Hete2HomoLayer(nn.Module):
     def forward(self, h_dict: torch.Tensor) -> torch.Tensor:
         # print("h_dict after:", [(key, h.shape) for key, h in h_dict.items()])
         trans_h_dict = self.layers(h_dict)
-        # print("trans_h_dict:", [(key, h.shape) for key, h in trans_h_dict.items()])
+        #print("trans_h_dict:", trans_h_dict)#[(key, h.shape) for key, h in trans_h_dict.items()])
         trans_h = torch.cat([value for _, value in trans_h_dict.items()], dim=0)
         return trans_h
 
@@ -255,22 +255,105 @@ class MLPN(nn.Module):
         h = self.backbone(h)
         return h
 
-# we define a simple MLP module here
-class MLP3(nn.Module):
-    def __init__(self, mlp_in_dim=32, hid_dims=[64, 128, 64], mlp_out_dim=1, nonlinear='relu', use_bn=False, dropout=0.0):
-        super(MLP3, self).__init__()
-        assert nonlinear in ['tanh', 'relu', 'sigmoid']
-        layer_size = hid_dims # [64, 128, 64]
-        layers = []
-        layers.append(mlp_block(mlp_in_dim, layer_size[0], nonlinear, use_bn, dropout))
-        for i in range(1,len(layer_size)):
-            layers.append(mlp_block(layer_size[i-1], layer_size[i], nonlinear, use_bn, dropout))
-        self.backbone = torch.nn.Sequential(*layers)
-        self.out = torch.nn.Linear(layer_size[-1], mlp_out_dim)
-        self.backbone.apply(weights_init)
-        self.out.apply(weights_init)
+class NetCapPredictor(nn.Module):
+    def __init__(self, num_class, proj_dim_dict, gnn_dim_list=[64, 64, 64], cmlp_dim_list=[64, 64, 64], 
+                 reg_dim_list=[64, 128, 128, 64, 1],
+                 gnn='sage-mean',  has_l2norm=False, has_bn=False, dropout=0.1, device=torch.device('cpu')):
+        super(NetCapPredictor, self).__init__()
+        self.num_class = num_class
+        self.layers = nn.ModuleList()
+        self.name = "hete2homo"+str(len(proj_dim_dict['net'])-1)+"_"+gnn+"_mlp"+ \
+                    str(len(cmlp_dim_list))+"_regmlp"+str(len(reg_dim_list)-1)
+        """ feature projection """ 
+        self.layers.append(Hete2HomoLayer(proj_dim_dict, act=nn.ReLU(), 
+                                          has_bn=has_bn, has_l2norm=has_l2norm, dropout=dropout))
+        """ create GNN model """ 
+        if gnn == "gcn":
+            # a 3-layer GCN
+            self.layers.append(GCN(gnn_dim_list[0], gnn_dim_list[1], 
+                                   gnn_dim_list[2], dropout=0.1).to(device))
+        elif gnn == "gat":
+            self.layers.append(GAT(gnn_dim_list[0], gnn_dim_list[1], gnn_dim_list[2], 
+                                   heads=[4, 4, 1], feat_drop=dropout, attn_drop=dropout).to(device))
+        # 2-layer graphSAGE
+        elif gnn == "sage-mean":
+            self.layers.append(GraphSAGE(gnn_dim_list[0], gnn_dim_list[1], gnn_dim_list[2], 1, 
+                                         activation=nn.ReLU(), dropout=dropout, 
+                                         aggregator_type="mean").to(device))
+        elif gnn == "sage-pool":
+            self.layers.append(GraphSAGE(gnn_dim_list[0], gnn_dim_list[1], gnn_dim_list[2], 1, 
+                                         activation=nn.ReLU(), dropout=dropout, 
+                                         aggregator_type="pool").to(device))
+        """ MLP classifier at the last layer """
+        self.layers.append(MLPN(cmlp_dim_list[0], cmlp_dim_list[1:], self.num_class, 
+                                act=nn.ReLU(), use_bn=has_bn, has_l2norm=has_l2norm, 
+                                dropout=dropout).to(device))
+        """ MLP regressor """
+        self.reg_layers = nn.ModuleList()
+        for i in range(num_class):
+            mlp_feats = [64, 128, 128, 64]
+            if i > 2:
+                dropout = 0.0
+            else:
+                dropout = 0.5
+            self.reg_layers.append(MLPN(proj_dim_dict['net'][0]+reg_dim_list[0]+1, reg_dim_list[1:-1], 1, 
+                                        act=nn.ReLU(), use_bn=False, has_l2norm=False, 
+                                        dropout=dropout).to(device))
+            
+    def forward(self, h_dict, bg):
+        trans_h = self.layers[0](h_dict)
+        dst_h = self.layers[1](bg, trans_h)
+        dst_h = dst_h[-h_dict['net'].shape[0]:]
+        t = self.layers[2](dst_h)
+        h = torch.zeros(t.shape[0], 1)
 
-    def forward(self, h):
-        h = self.backbone(h)
-        h = self.out(h)
-        return h
+        for i in range(self.num_class):
+            # print('Training class {:d} ...'.format(i))
+            regressor = self.reg_layers[i]
+            cmask = t.argmax(dim=1).squeeze() == i
+            pred_t = t.argmax(dim=1).squeeze()
+            pred_t = (pred_t / pred_t.max()).view(-1, 1)
+            # print("pred_t:", pred_t)
+            net_h = torch.cat([dst_h[cmask], h_dict['net'][cmask], pred_t[cmask]], dim=1)
+            h[cmask] = regressor(net_h)
+        return t, h
+
+class NetClassifier(nn.Module):
+    def __init__(self, num_class, proj_dim_dict, gnn_dim_list=[64, 64, 64], cmlp_dim_list=[64, 64, 64],
+                 gnn='sage-mean',  has_l2norm=False, has_bn=False, dropout=0.1, device=torch.device('cpu')):
+        super(NetClassifier, self).__init__()
+        self.num_class = num_class
+        self.layers = nn.ModuleList()
+        self.name = "hete2homo"+str(len(proj_dim_dict['net'])-1)+"_"+gnn+"_mlp"+ \
+                    str(len(cmlp_dim_list))
+        """ feature projection """ 
+        self.layers.append(Hete2HomoLayer(proj_dim_dict, act=nn.ReLU(), 
+                                          has_bn=has_bn, has_l2norm=has_l2norm, dropout=dropout))
+        """ create GNN model """ 
+        if gnn == "gcn":
+            # a 3-layer GCN
+            self.layers.append(GCN(gnn_dim_list[0], gnn_dim_list[1], 
+                                   gnn_dim_list[2], dropout=0.1).to(device))
+        elif gnn == "gat":
+            self.layers.append(GAT(gnn_dim_list[0], gnn_dim_list[1], gnn_dim_list[2], 
+                                   heads=[4, 4, 1], feat_drop=dropout, attn_drop=dropout).to(device))
+        # 2-layer graphSAGE
+        elif gnn == "sage-mean":
+            self.layers.append(GraphSAGE(gnn_dim_list[0], gnn_dim_list[1], gnn_dim_list[2], 1, 
+                                         activation=nn.ReLU(), dropout=dropout, 
+                                         aggregator_type="mean").to(device))
+        elif gnn == "sage-pool":
+            self.layers.append(GraphSAGE(gnn_dim_list[0], gnn_dim_list[1], gnn_dim_list[2], 1, 
+                                         activation=nn.ReLU(), dropout=dropout, 
+                                         aggregator_type="pool").to(device))
+        """ MLP classifier at the last layer """
+        self.layers.append(MLPN(cmlp_dim_list[0], cmlp_dim_list[1:], self.num_class, 
+                                act=nn.ReLU(), use_bn=has_bn, has_l2norm=has_l2norm, 
+                                dropout=dropout).to(device))
+            
+    def forward(self, bg, h_dict):
+        trans_h = self.layers[0](h_dict)
+        dst_h = self.layers[1](bg, trans_h)
+        dst_h = dst_h[-h_dict['net'].shape[0]:]
+        t = self.layers[2](dst_h)
+        return t

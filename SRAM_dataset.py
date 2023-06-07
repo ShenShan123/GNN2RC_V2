@@ -50,7 +50,6 @@ class SRAMDataset(DGLDataset):
         het_g, _ = dgl.load_graphs(self.raw_path + '.bi_graph.bin')
         het_g = het_g[0].long()
         """ we use the directed subgraph and filter out the features of dst nodes """
-        # shg = dgl.edge_type_subgraph(hg, [('device', 'device-net', 'net'),])
         shg = het_g
         (xd_max, xn_max, xi_max) = (None, None, None)
         # remove the power pins
@@ -62,21 +61,21 @@ class SRAMDataset(DGLDataset):
             shg.remove_nodes(torch.tensor([0, 1, 2]), ntype='net')
         elif self.name == "array_128_32_8t" or self.name == "8T_digitized_timing_top_fast":
             # These are collected from ultra8T features
-            # xd_max= torch.tensor([1.2800e+02, 1.2800e+02, 1.2800e+02, 1.2800e+02, 2.4000e-06, 2.0000e-06,
-            #                 2.0000e+00, 2.0000e-06, 1.7400e-04, 4.0000e+01, 2.8000e+02, 1.0500e-05,
-            #                 torch.inf, torch.inf,  torch.inf, 4.0000e+00, 4.0000e+00], dtype=torch.float64)
-            # xn_max = torch.tensor([1.0658e+05, 3.4760e+03, 9.6860e+04, 1.0644e+05, 3.7819e-02, 6.9600e-04,
-            #                         2.0000e+00, 4.0000e-06, 1.7400e-04, 4.1000e+01, 8.1600e+03, 3.3000e-04,
-            #                         torch.inf, torch.inf, torch.inf, 4.5845e+04], dtype=torch.float64)
-            # xi_max = torch.tensor([7.0588e+02, 4.4988e+02, 1.1849e+03, 8.7500e-01], dtype=torch.float64)
+            xd_max= torch.tensor([1.2800e+02, 1.2800e+02, 1.2800e+02, 1.2800e+02, 2.4000e-06, 2.0000e-06,
+                            2.0000e+00, 2.0000e-06, 1.7400e-04, 4.0000e+01, 2.8000e+02, 1.0500e-05,
+                            torch.inf, torch.inf,  torch.inf, 4.0000e+00, 4.0000e+00], dtype=torch.float64)
+            xn_max = torch.tensor([1.0658e+05, 5.0180e+04, 9.6860e+04, 1.0644e+05, 3.7819e-02, 6.9600e-04,
+                                    2.0000e+00, 4.0000e-06, 1.7400e-04, 4.1000e+01, 8.1600e+03, 3.3000e-04,
+                                    torch.inf, torch.inf, torch.inf, 4.5845e+04], dtype=torch.float64)
+            xi_max = torch.tensor([2.4279e+03, 4.4988e+02, 2.9269e+03, 8.7500e-01], dtype=torch.float64)
             # These are collected from sandwich features
-            xd_max= torch.tensor([5.0000e+00, 5.0000e+00, 5.0000e+00, 5.0000e+00, 3.0000e-06, 1.0000e-06,
-                            torch.inf, torch.inf, torch.inf, torch.inf, torch.inf, torch.inf,
-                            torch.inf, torch.inf, torch.inf, 4.0000e+00, 1.0000e+00], dtype=torch.float64)
-            xn_max= torch.tensor([6.2740e+04, 5.0180e+04, 1.2560e+04, torch.inf, 1.2630e-03, 1.5061e-03,
-                            torch.inf, torch.inf, torch.inf, torch.inf, torch.inf,torch.inf,
-                            torch.inf, torch.inf, torch.inf, 5.4140e+04], dtype=torch.float64)
-            xi_max= torch.tensor([2.4279e+03, 2.9988e+02, 2.9269e+03, 8.7500e-01], dtype=torch.float64)
+            # xd_max= torch.tensor([5.0000e+00, 5.0000e+00, 5.0000e+00, 5.0000e+00, 3.0000e-06, 1.0000e-06,
+            #                 torch.inf, torch.inf, torch.inf, torch.inf, torch.inf, torch.inf,
+            #                 torch.inf, torch.inf, torch.inf, 4.0000e+00, 1.0000e+00], dtype=torch.float64)
+            # xn_max= torch.tensor([6.2740e+04, 5.0180e+04, 1.2560e+04, torch.inf, 1.2630e-03, 1.5061e-03,
+            #                 torch.inf, torch.inf, torch.inf, torch.inf, torch.inf,torch.inf,
+            #                 torch.inf, torch.inf, torch.inf, 5.4140e+04], dtype=torch.float64)
+            # xi_max= torch.tensor([2.4279e+03, 2.9988e+02, 2.9269e+03, 8.7500e-01], dtype=torch.float64)
 
         self._num_n = shg.num_nodes('net')
         self._num_d = shg.num_nodes('device')
@@ -110,14 +109,14 @@ class SRAMDataset(DGLDataset):
             if x_min is None:
                 # bug to be fixed
                 x = x - x.min()
-                print("x_min=", x.min())
+                # print("x_min=", x.min())
             else:
                 x = x - x_min
 
             if x_max is None:
                 x_max, max_idx = torch.max(x, 0)
                 x_max[(x_max == 0.0)] = torch.inf
-                print("x_max=", x_max)
+                # print("x_max=", x_max)
                 x_norm = x / x_max.expand(x.shape[0], -1)
             else:
                 x_norm = x / x_max.expand(x.shape[0], -1)
@@ -261,4 +260,4 @@ class SRAMDataset(DGLDataset):
         ax.set_xlabel('Cap (fF)')
         ax.set_title(self.name + ' SRAM')
         # plt.xlim(x.min(), x.max())
-        plt.savefig('./data/plots/'+ self.name + '_label_hist', dpi=400)
+        # plt.savefig('./data/plots/'+ self.name + '_label_hist', dpi=400)
