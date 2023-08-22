@@ -2,6 +2,8 @@ import numpy as np
 from subckt import Subckt, Net, Device
 import re
 import pickle
+import warnings
+import copy
 
 def handle_wrapper_lines(filename):
     try:
@@ -50,12 +52,13 @@ def handle_wrapper_lines(filename):
         newLines.append(line)
     return newLines
 
-def read_cdl(filename = None): 
+def read_cdl(filename, topname): 
     # This function convert a cdl file to a list of python class
     # filename: the cdl file name
     # subcktList: a list of Subckt , can be None
     subcktList = list()
     lines = handle_wrapper_lines(filename)
+    topSubcktIdx = -1
     # assert 0
     for i, line in enumerate(lines):
         # print(line)
@@ -79,10 +82,14 @@ def read_cdl(filename = None):
                 for paramk, paramv in device.params.items():
                     if paramk:
                         subckt.params[paramk] = paramv
+            # record the top module index
+            if subckt.name == topname:
+                topSubcktIdx = len(subcktList) 
             # push this subckt to subcktList
             subcktList.append(subckt)
-            print('finish subckt:%s with %d instances and %d nets\n' 
-                  % (subckt.name,len(subckt.deviceList),len(subckt.netList)))
+            print('push subckt:%s with %d instances and %d nets into subcktList with id %d\n' 
+                  % (subckt.name,len(subckt.deviceList),len(subckt.netList), 
+                     len(subcktList)-1))
             continue
         ## we split the line text
         newtokens = []
@@ -106,11 +113,11 @@ def read_cdl(filename = None):
                     paramFlag.append(j)
                     [key, value] = token.split('=')
                     # we transform the parameter unit here
-                    if 'u' == value[-1] and re.match('[0-9]', value):
+                    if value[-1] in ['u', 'U'] and re.match('[0-9]', value):
                         value = float(value[:-1]+'E-06')
-                    elif 'n' == value[-1] and re.match('[0-9]', value):
+                    elif value[-1] in ['n', 'N'] and re.match('[0-9]', value):
                         value = float(value[:-1]+'E-09')
-                    elif 'p' == value[-1] and re.match('[0-9]', value):
+                    elif value[-1] in ['p', 'P'] and re.match('[0-9]', value):
                         value = float(value[:-1]+'E-12')
                     elif re.match('[0-9]+', value):
                         value = float(value)
@@ -239,29 +246,26 @@ def read_cdl(filename = None):
                     subIdx = k
             # record the reference of the current subckt, which is the
             # element to be push in subckList
+            device.subPtr = subIdx
+
             if subIdx != -1:
-                subcktList[subIdx].refPtr.append(len(subcktList))
-                device.subPtr = subIdx
-                # if the subckt of the current instance contains the undefined instance,
-                # the subckt comprised of the current inst is also misInstDf
-                subckt.misInstDf |= subcktList[subIdx].misInstDf
                 # check the port number, if it doesn't match, throw an error
                 if subcktList[subIdx].portNum != modelNameIdx - 1:
-                    raise Exception('instance: {}, subckt: {}, port number mismatch:{:d} and {:d}'.format(
-                                    device.name,subcktList[subIdx].name,
-                                    subcktList[subIdx].portNum, modelNameIdx - 1))
-                # update the instances of the pre-defined subckt with the parameters
+                    print(line)
+                    raise Exception('instance: {}, subckt: {}, port number mismatch:{:d} and {:d}'
+                                    .format(filename, device.name,subcktList[subIdx].name,
+                                            subcktList[subIdx].portNum, modelNameIdx - 1))
+                # record the paramters that will be used in updateSubckt
                 if len(paramKeyVals)!=0 :
-                    assert (len(subcktList[subIdx].params)!=0)
                     assert (len(subcktList[subIdx].params) == len(paramKeyVals))
-                    subcktList[subIdx].update(paramKeyVals)
+                    device.paramKeyVals = copy.deepcopy(paramKeyVals)
+                    #subcktList[subIdx].update(paramKeyVals)
             else:
-                print('No definition! inst:{} with name:{} subckt:{}'.format(device.name, device.subName, subckt.name))
-                # else we can do a shit with misInstDf (missing instance definition)
-                subckt.misInstDf = True
-                device.subPtr = subIdx
+                warnings.warn('No definition! inst:{} with name:{} subckt:{}'
+                              .format(device.name, device.subName, subckt.name))
+                
                 # to do :  handle the mis-definition inst with params
-                if len(paramKeyVals)!=0 :
+                if len(paramKeyVals) != 0:
                     raise Exception('instance:{} with model:{} misses the definition!'
                                     .format(device.name,modelName))
         
@@ -328,19 +332,21 @@ def read_cdl(filename = None):
                 net.tot_area += device.m * device.area
                 net.tot_pj += device.m * device.pj
             elif 'Subckt' == device.type:
-                if subIdx!=-1:
+                # we move this part to updateSubckt()
+                if subIdx != -1:
+                    pass
                     # merge the info from the port of the matched subckt to
                     # the current net of the current subckt
-                    if len(subcktList[subIdx].stashNtList):
-                        print('net before merge:', net)
-                        net.mergeNets(subcktList[subIdx].stashNtList[ni - 1])
-                        print('net after merge:', net)
-                    else:
-                        net.mergeNets(subcktList[subIdx].netList[ni - 1])
+                    # if len(subcktList[subIdx].stashNtList):
+                    #     print('net before merge:', net)
+                    #     net.mergeNets(subcktList[subIdx].stashNtList[ni - 1])
+                    #     print('net after merge:', net)
+                    # else:
+                    #     net.mergeNets(subcktList[subIdx].netList[ni - 1])
             
-            if not net.nonempty():
-                print(net) 
-                # assert len(device.params)
+            # if net.isempty():
+            #     print(net) 
+                
             # save the instance pointer (index number) into the net, the
             # new inst that we just construted is at the tail of the deviceList
             net.devPtr.append(len(subckt.deviceList)-1)
@@ -349,16 +355,13 @@ def read_cdl(filename = None):
             # save the net pointer (index number) into the inst in the deviceList
             subckt.deviceList[-1].ntPtr.append(ntIdx if ntIdx != -1 else len(subckt.netList)-1)
         # clean up the nets connecting to parameterized instances in this subckt
-        if  device.type == 'Subckt' and subIdx!=-1 and len(subcktList[subIdx].stashNtList):
-            subcktList[subIdx].stashNtList = list()
+        # if  device.type == 'Subckt' and subIdx!=-1 and len(subcktList[subIdx].stashNtList):
+        #     subcktList[subIdx].stashNtList = list()
     
     assert len(subcktList)
 
-    # handle the missed subckt definition in the subcktCache
-    for i in range(len(subcktList)):
-        updateSubckt(subcktList,i)
-        assert(not subcktList[i].misInstDf )
-        print('subckt %d: %s scan finish \n' % (i,subcktList[i].name))
+    # handle the missed subckt definition in the subcktList
+    updateSubckt(subcktList, topSubcktIdx)
     
     ## save the subckList
     if len(subcktList):
@@ -370,30 +373,23 @@ def read_cdl(filename = None):
                 print('write bin file {} successfully'.format(sbcktFileName))
         except:
             raise Exception('failed to save subcktList into {}'.format(sbcktFileName))
-        # save('~/SPF_examples/Matlab_data/' + mName[end() - 1] + '.sbckt.mat','subcktList')
-        # structList = subcktList2structList(subcktList)
-        # save('~/SPF_examples/Matlab_data/' + mName[end() - 1] + '.sbckt.dat','structList')
     
-    return subcktList
+    return subcktList, topSubcktIdx
     
 def updateSubckt(subcktList, subIdx): 
     # this subckt doesn't contain a missed definition instance
     subckt = subcktList[subIdx]
-    if not subckt.misInstDf:
-        for net in subckt.netList:
-            if not net.nonempty() and subckt.name != 'precharge_8' and subckt.name != 'global_pre_224':
-                raise Exception('Empty net in subckt:%s, net:%s'
-                                %(subckt.name, net.name))
+    if subckt.scan:
+        assert (len(subckt.params) == 0)
         return
+
+    print("updating subckt: %s, id: %d" % (subckt.name, subIdx))
     
     # iterativelly check its deviceList
     for i, device in enumerate(subckt.deviceList):
         if device.type != 'Subckt':
             continue
-        # elif device.subPtr != -1:
-        #     continue
-        # print('In subckt {} find a undefined instance: {} subckt name: {} type:{}'
-        #       .format(subckt.name, device.name, device.subName, device.type))
+        
         # if inst's definition is missing, we seach the subcktList again
         # to update the net's infomation
         cSubIdx = -1
@@ -401,7 +397,8 @@ def updateSubckt(subcktList, subIdx):
             if sub.name == device.subName:
                 cSubIdx = s
                 break
-        if cSubIdx != -1:
+        
+        if cSubIdx != -1: 
             # update the net info connecting to this inst
             assert(subcktList[cSubIdx].portNum == len(device.ntPtr))
             # call this function recursively till there is no inst that
@@ -412,18 +409,38 @@ def updateSubckt(subcktList, subIdx):
             device.subPtr = cSubIdx
             # fixed the error when we cannot find its definition 
             device.type = 'Subckt'
-            # update the inst in the subckt indexed by subIdx
-            # subcktList[subIdx].deviceList[i] = inst
-            # update nets in the subckt indexed by subIdx
+            if len(device.paramKeyVals):
+                assert (len(subcktList[cSubIdx].params))
+                assert (len(subcktList[cSubIdx].params) == len(device.paramKeyVals))
+                print("with paramKeyVals:", device.paramKeyVals)
+                subcktList[cSubIdx].update(device.paramKeyVals)
+
+            # update nets in this subckt indexed by device.ntPtr
             for l, ntIdx in enumerate(device.ntPtr):
                 curNet = subckt.netList[ntIdx]
                 # Note: the pin order of the current inst is same as that 
                 # in its definition subckt
-                curNet.mergeNets(subcktList[cSubIdx].netList[l])
-        else:
-            raise Exception('the definition of inst: {} in the subckt: {} not found!'
+                if len(device.paramKeyVals):
+                    print('before merge:', curNet)
+                    curNet.mergeNets(subcktList[cSubIdx].stashNtList[l])
+                    print('after merge:', curNet)
+                else:
+                    curNet.mergeNets(subcktList[cSubIdx].netList[l])
+        
+            # clean the stashNtList for other device instance
+            subcktList[cSubIdx].stashNtList = list()
+        elif cSubIdx == -1:
+            raise Exception('Definition not found! inst: {}, subckt: {}'
                             .format(subckt.deviceList[i].name,
                                     subckt.deviceList[i].subName))
     
-    subcktList[subIdx].misInstDf = False
+    for i, net in enumerate(subckt.netList):
+        if net.isempty():
+           warnings.warn("Empty net: %s, id: %d, subckt: %s, id: %d" 
+                            % (net.name, i, subckt.name, subIdx))
+        if re.search("^BL0", net.name):
+            print("net:", net, "in subckt:", subckt.name)
+
+    subckt.scan = False if len(subckt.params) else True
+    
     return

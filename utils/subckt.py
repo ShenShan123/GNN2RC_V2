@@ -11,6 +11,7 @@ class Subckt():
         self.misInstDf = False
         self.refPtr = []
         self.params = dict()
+        self.scan = False
         return
 
     def copySub(self): 
@@ -26,8 +27,8 @@ class Subckt():
         return nSub
         
         
-    def update(self, paramKeyVals : dict = None): 
-        #nSub = copySub(obj);
+    def update(self, paramKeyVals : dict): 
+        self.scan = False
         # init a new nodeList for the instance of this subckt
         self.stashNtList = copy.deepcopy(self.netList)
         # update instances in the subckt using the given parameters
@@ -35,7 +36,7 @@ class Subckt():
             for paramKey in paramKeyVals.keys():
                 if paramKey not in device.params.keys():
                     continue
-                print('inst name:{} type:{} param:{} value:{:.2f} instparam:{}'
+                print('inst name:{} type:{} key:{} value:{:.2f} device param:{}'
                       .format(device.name, device.type, paramKey, 
                               paramKeyVals[paramKey], device.params[paramKey]))
                 if device.params[paramKey] == 'm':
@@ -93,9 +94,6 @@ class Subckt():
                 elif 'Subckt' == device.type:
                     raise Exception('self inst:%s is a subckt:%s !!',device.name,device.subName)
                 lastPtr = device.ntPtr[j]
-        # for i, node in enumerate(self.nodeList):
-        #     print('node in nodeList', node)
-        #     print('node in stashNodeList',self.stashNdList[i])
         
     # def clean(self): 
     #     if len(self.params)==0:
@@ -134,6 +132,7 @@ class Device():
         self.type = ''
         self.subName = ''
         self.params = dict()
+        self.paramKeyVals = dict()
         return
         
     def hasParams(self): 
@@ -155,7 +154,27 @@ class Device():
         self.area = 0.0
         self.pj = 0.0
         return self
-
+    
+    def __str__(self):
+        info = self.name+ " " +self.type+" ["
+        if self.type == "MOS":
+            info += " ".join(["m=%d"%self.m, "#nf=%d"%self.nf, 
+                              "w=%.2E"%self.w, "l=%.2E"%self.l])
+        elif self.type == "Rupolym":
+            info += " ".join(["m=%d"%self.m, "#nf=%d"%self.nf,
+                              "r_w=%.2E"%self.r_w, "r_l=%.2E"%self.r_l])
+        elif self.type == "Cfmom":
+            info += " ".join(["m=%d"%self.m, "#nf=%d"%self.nf,
+                              "nr=%.2E"%self.nr, "lr=%.2E"%self.lr])
+        elif self.type == "Moscap":
+            info += " ".join(["m=%d"%self.m, "#nf=%d"%self.nf,
+                              "wr=%.2E"%self.wr, "m_lr=%.2E"%self.m_lr])
+        elif self.type == "Ndio":
+            info += " ".join(["m=%d"%self.m, "#nf=%d"%self.nf,
+                              "area=%.2E"%self.area, "pj=%.2E"%self.pj])
+        elif self.type == "Subckt":
+            info += " ".join([self.subName, str(self.subPtr)])
+        return info+"]"
 
 class Net():
     def __init__(self): 
@@ -248,8 +267,8 @@ class Net():
         self.postNameList = []
         return self
     
-    def nonempty(self):
-        return bool(self.num_mos + self.num_r + self.num_c + self.num_d)
+    def isempty(self):
+        return not bool(self.num_mos + self.num_r + self.num_c + self.num_d)
     
     def __repr__(self):
         pass
