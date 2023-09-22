@@ -14,20 +14,24 @@ def plot_errors(x, y, pltname, c):
 
     absx = torch.abs(x)
     max_err, _ = torch.max(absx, dim=0)
-    fig.suptitle('Class:{:d} mean error:{:.2f}%, max error:{:.2f}%'
+    fig.suptitle('epoch:{:d} mean error:{:.2f}%, max error:{:.2f}%'
                  .format(c, torch.mean(absx).item()*100, max_err.item()*100))
     plt.savefig('./data/plots/'+pltname, dpi=400)
     plt.close(fig)
 
 def ud_loss(logits, targets, weights=None):
-    mask = (targets != torch.inf) &  (logits != torch.inf) &  (targets != 0.0)
-    logits = torch.squeeze(logits[mask])
-    targets = torch.squeeze(targets[mask])
+    mask = (targets != torch.inf) & (logits != torch.inf) &  (targets != 0.0)
+    logits = logits[mask].squeeze()
+    targets = targets[mask].squeeze()
     diffs = logits - targets
     rel_w = torch.div(diffs, targets)
-    squ_rel_w = torch.square(rel_w)* weights[mask].squeeze()
-    loss_value = torch.mean(squ_rel_w)
-    max_loss, max_i = torch.max(loss_value, dim=0)
+    squ_rel_w = torch.square(rel_w)
+    if weights is None:
+        loss_value = torch.mean(squ_rel_w)
+    else:
+        squ_rel_w *= weights[mask].squeeze()
+        loss_value = squ_rel_w.sum()
+    # max_loss, max_i = torch.max(loss_value, dim=0)
     # print('in loss with max loss: logits:{:.4f}, targets:{:.4f}, loss:{:.4f}, with index:{:05d}'
     #       .format(logits[max_i].item(), targets[max_i].item(), max_loss.item(), max_i.item()))
     return loss_value
@@ -46,7 +50,7 @@ def validation_caps(logits, targets, category, mask=None, pltname="err_in_val"):
         # print("max_err:", max_err)
         # plot_errors(((logits - targets) / targets).squeeze(), targets, pltname, category)
         metrics = {"mean_err": mean_err.item(), "max_err": max_err.item()}
-        return metrics
+        return metrics, err_vec
 
 def evaluation_caps(h, model):
     with torch.no_grad():

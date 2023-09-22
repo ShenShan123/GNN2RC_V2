@@ -5,7 +5,7 @@ from SRAM_dataset import SRAMDataset
 from regression import train_cap
 from classification import train, validation, evaluation
 from datetime import datetime
-from utils.circuits2graph import run_cir2g
+from utils.circuits2graph import run_struct2g
 
 
 if __name__ == '__main__':

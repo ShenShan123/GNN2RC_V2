@@ -17,7 +17,7 @@ def constructGraph(structList,
                    ):
     curInstID = id_dict["inst"]
     subckt = structList[struIdx]
-    print('In subckt:', subckt.name, 'struIdx:', struIdx, 'curInstID:', curInstID)
+    # print('In subckt:', subckt.name, 'struIdx:', struIdx, 'curInstID:', curInstID)
     # print('netList shape:', netList.shape)
     # print('deviceList shape:', deviceList.shape)
     globalNtList = [-1] * len(subckt.netList)
@@ -67,9 +67,9 @@ def constructGraph(structList,
             #         c_file.write(line)
             # print("netName:", netName)
 
-            # if re.search("VDD", net.name, re.I) or re.search("VSS", net.name, re.I):
-            #     print("net name: %s nid: %d" % (net.name, globalNtList[j]))
-            #     assert hier_lvl < 3
+            if re.search("VDD", net.name, re.I) or re.search("VSS", net.name, re.I):
+                print("net name: %s nid: %d" % (net.name, globalNtList[j]))
+                assert hier_lvl < 3
 
             id_dict["net"] = id_dict["net"] + 1
 
@@ -86,7 +86,7 @@ def constructGraph(structList,
         subStruIdx = device.subPtr 
         ntPtr = device.ntPtr
         ### this is a terminal device
-        if subStruIdx == -1:
+        if device.type != 'Subckt':
             assert(device.type != 'Subckt')
             globalDvList[l] = id_dict["device"]
             ### concatenate the old feature with the new feature hier_lvl
@@ -268,7 +268,7 @@ def build_graph(subcktList, subIdx):
     constructGraph(subcktList, subIdx, 
                 {"inst":0, "net":0, "device":0},
                 [], edge_dict, data_dict, 0)
-
+    
     for key in edge_dict.keys():
         src, dst = edge_dict[key]
         print(key + "_src:", src[:100])

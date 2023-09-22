@@ -11,6 +11,7 @@ class Hete2HomoLayer(nn.Module):
         super(Hete2HomoLayer, self).__init__()
         self.layers = HeteroMLPLayer(linear_dict, has_l2norm=has_l2norm, has_bn=has_bn,
                                      act=act, dropout=dropout, final_act=False)
+        self.proj_dim = linear_dict["net"][-1]
     '''
     def forward(self, shg, h_dict: torch.Tensor) -> torch.Tensor:
         h_dict = self.layers(h_dict)
@@ -37,18 +38,33 @@ class Hete2HomoLayer(nn.Module):
         trans_h = torch.cat([value for _, value in trans_h_dict.items()], dim=0)
         return trans_h
     '''
+    '''
     def forward(self, h_dict: torch.Tensor) -> torch.Tensor:
         # print("h_dict after:", [(key, h.shape) for key, h in h_dict.items()])
         trans_h_dict = self.layers(h_dict)
         #print("trans_h_dict:", trans_h_dict)#[(key, h.shape) for key, h in trans_h_dict.items()])
         trans_h = torch.cat([value for _, value in trans_h_dict.items()], dim=0)
         return trans_h
+    '''
+
+    def forward(self, feats: torch.Tensor, ntypes: torch.Tensor, dim_list: list) -> torch.Tensor:
+        ## restore the feats to h_dict with dim_list defining the dim number for each feat type
+        h_dict = {"device": feats[ntypes == 0][:,0:dim_list[0]], 
+                  "inst":feats[ntypes == 1][:,0:dim_list[1]], 
+                  "net": feats[ntypes == 2][:,0:dim_list[2]]}
+        trans_h_dict = self.layers(h_dict)
+        h = torch.zeros(feats.shape[0], self.proj_dim, device=feats.device)
+        # the node order of h is the same as feats
+        h[ntypes == 0] = trans_h_dict["device"]
+        h[ntypes == 1] = trans_h_dict["inst"]
+        h[ntypes == 2] = trans_h_dict["net"]
+        return h
 
 class GCN(nn.Module):
     def __init__(self, in_size, hid_size, out_size, dropout=0.5):
         super().__init__()
         self.layers = nn.ModuleList()
-        # two-layer GCN
+        # 3-layer GCN
         self.layers.append(dgl.nn.GraphConv(in_size, hid_size, activation=F.relu))
         self.layers.append(dgl.nn.GraphConv(hid_size, hid_size, activation=F.relu))
         self.layers.append(dgl.nn.GraphConv(hid_size, out_size))
@@ -166,23 +182,23 @@ class GraphSAGE(nn.Module):
         # output layer
         self.layers.append(dgl.nn.SAGEConv(n_hidden, n_classes, aggregator_type)) # activation None
 
-    # def forward(self, blocks, x):
-    #     h = x
-    #     for l, (layer, block) in enumerate(zip(self.layers, blocks)):
-    #         h = layer(block, h)
-    #         if l != len(self.layers) - 1:
-    #             h = F.relu(h)
-    #             h = self.dropout(h)
-    #     return h
-    
-    def forward(self, g, x):
+    def forward(self, blocks, x):
         h = x
-        for l, layer in enumerate(self.layers):
-            h = layer(g, h)
+        for l, (layer, block) in enumerate(zip(self.layers, blocks)):
+            h = layer(block, h)
             if l != len(self.layers) - 1:
                 h = F.relu(h)
                 h = self.dropout(h)
         return h
+    
+    # def forward(self, g, x):
+    #     h = x
+    #     for l, layer in enumerate(self.layers):
+    #         h = layer(g, h)
+    #         if l != len(self.layers) - 1:
+    #             h = F.relu(h)
+    #             h = self.dropout(h)
+    #     return h
 
 """ initialize the weights in MLP3 """
 def weights_init(m):
@@ -256,17 +272,18 @@ class MLPN(nn.Module):
         return h
 
 class NetCapPredictor(nn.Module):
-    def __init__(self, num_class, proj_dim_dict, gnn_dim_list=[64, 64, 64], cmlp_dim_list=[64, 64, 64], 
+    def __init__(self, num_classes, proj_dim_dict, gnn_dim_list=[64, 64, 64], cmlp_dim_list=[64, 64, 64], 
                  reg_dim_list=[64, 128, 128, 64, 1],
-                 gnn='sage-mean',  has_l2norm=False, has_bn=False, dropout=0.1, device=torch.device('cpu')):
+                 gnn='sage-mean',  has_l2norm=False, has_bn=False, dropout=0.1, device=torch.device('cuda:0')):
         super(NetCapPredictor, self).__init__()
-        self.num_class = num_class
+        self.num_classes = num_classes
         self.layers = nn.ModuleList()
         self.name = "hete2homo"+str(len(proj_dim_dict['net'])-1)+"_"+gnn+"_mlp"+ \
                     str(len(cmlp_dim_list))+"_regmlp"+str(len(reg_dim_list)-1)
         """ feature projection """ 
         self.layers.append(Hete2HomoLayer(proj_dim_dict, act=nn.ReLU(), 
-                                          has_bn=has_bn, has_l2norm=has_l2norm, dropout=dropout))
+                                          has_bn=has_bn, has_l2norm=has_l2norm, dropout=dropout).to(device))
+        self.proj_dim = gnn_dim_list[0]
         """ create GNN model """ 
         if gnn == "gcn":
             # a 3-layer GCN
@@ -275,31 +292,33 @@ class NetCapPredictor(nn.Module):
         elif gnn == "gat":
             self.layers.append(GAT(gnn_dim_list[0], gnn_dim_list[1], gnn_dim_list[2], 
                                    heads=[4, 4, 1], feat_drop=dropout, attn_drop=dropout).to(device))
-        # 2-layer graphSAGE
+        # 2-layer graphSAGE for old version
         elif gnn == "sage-mean":
-            self.layers.append(GraphSAGE(gnn_dim_list[0], gnn_dim_list[1], gnn_dim_list[2], 1, 
+            self.layers.append(GraphSAGE(gnn_dim_list[0], gnn_dim_list[1], gnn_dim_list[2], 1, # change layers
                                          activation=nn.ReLU(), dropout=dropout, 
                                          aggregator_type="mean").to(device))
         elif gnn == "sage-pool":
             self.layers.append(GraphSAGE(gnn_dim_list[0], gnn_dim_list[1], gnn_dim_list[2], 1, 
                                          activation=nn.ReLU(), dropout=dropout, 
                                          aggregator_type="pool").to(device))
-        """ MLP classifier at the last layer """
-        self.layers.append(MLPN(cmlp_dim_list[0], cmlp_dim_list[1:], self.num_class, 
-                                act=nn.ReLU(), use_bn=has_bn, has_l2norm=has_l2norm, 
-                                dropout=dropout).to(device))
+        # """ MLP classifier at the last layer """
+        # self.layers.append(MLPN(cmlp_dim_list[0], cmlp_dim_list[1:], self.num_classes, 
+        #                         act=nn.ReLU(), use_bn=has_bn, has_l2norm=has_l2norm, 
+        #                         dropout=dropout).to(device))
+        
         """ MLP regressor """
         self.reg_layers = nn.ModuleList()
-        for i in range(num_class):
-            mlp_feats = [64, 128, 128, 64]
-            if i > 2:
-                dropout = 0.0
-            else:
-                dropout = 0.5
-            self.reg_layers.append(MLPN(proj_dim_dict['net'][0]+reg_dim_list[0]+1, reg_dim_list[1:-1], 1, 
-                                        act=nn.ReLU(), use_bn=False, has_l2norm=False, 
-                                        dropout=dropout).to(device))
-            
+        # for i in range(self.num_classes):
+        #     mlp_feats = [64, 128, 128, 64]
+        #     if i > 2:
+        #         dropout = 0.0
+        #     else:
+        #         dropout = 0.5
+        ### we have changed the input dim
+        self.reg_layers.append(MLPN(proj_dim_dict['net'][0]+reg_dim_list[0], reg_dim_list[1:-1], 1, 
+                                    act=nn.ReLU(), use_bn=has_bn, has_l2norm=False, 
+                                    dropout=dropout).to(device))
+    """
     def forward(self, h_dict, bg):
         trans_h = self.layers[0](h_dict)
         dst_h = self.layers[1](bg, trans_h)
@@ -311,49 +330,51 @@ class NetCapPredictor(nn.Module):
             # print('Training class {:d} ...'.format(i))
             regressor = self.reg_layers[i]
             cmask = t.argmax(dim=1).squeeze() == i
-            pred_t = t.argmax(dim=1).squeeze()
-            pred_t = (pred_t / pred_t.max()).view(-1, 1)
+            # to be debug
+            prob_t, _ = t.max(dim=1, keepdim=True)
+            # pred_t = (pred_t / pred_t.max()).view(-1, 1)
             # print("pred_t:", pred_t)
-            net_h = torch.cat([dst_h[cmask], h_dict['net'][cmask], pred_t[cmask]], dim=1)
+            net_h = torch.cat([dst_h[cmask], h_dict['net'][cmask], prob_t[cmask]], dim=1)
             h[cmask] = regressor(net_h)
         return t, h
+        """
+    
+    def forward(self, dims, blocks):
+        # print("blocks[0].srcdata[x]",blocks[0].srcdata['x'])
+        feats = blocks[0].srcdata['x']
+        ntypes = blocks[0].srcdata['_TYPE']
+        # print("blocks[0].srcdata[_TYPE]", blocks[0].srcdata['_TYPE'])
+        proj_h = self.layers[0](feats, ntypes, dims)
+        # print("proj_h size:", proj_h.shape)
+        dst_h = self.layers[1](blocks, proj_h)
+        # print("dst_h size:", dst_h.shape)
+        # the original features of net nodes
+        n_feat = blocks[-1].dstdata['x']
+        # n_feat = n_feat[blocks[-1].ndata["_TYPE"]["_N"] == 2]
+        n_feat = n_feat[:,0:dims[-1]]
+        # print("original feat size:", n_feat.shape)
+        # preserve the hidden embeddings of net nodes
+        # ntypes = blocks[-1].dstdata['_TYPE']
+        # print("blocks[-1] type:", blocks[-1].dstdata['_TYPE'])
+        # print("blocks[-1] type size:", blocks[-1].dstdata['_TYPE'].shape)
+        # dst_h = dst_h[blocks[-1].ndata["_TYPE"]["_N"] == 2]
+        # l = self.layers[2](dst_h)
+        # prob_t, indices = l.max(dim=1, keepdim=True)
+        # h = torch.zeros((l.shape[0], 1), device=feats.device)
 
-class NetClassifier(nn.Module):
-    def __init__(self, num_class, proj_dim_dict, gnn_dim_list=[64, 64, 64], cmlp_dim_list=[64, 64, 64],
-                 gnn='sage-mean',  has_l2norm=False, has_bn=False, dropout=0.1, device=torch.device('cpu')):
-        super(NetClassifier, self).__init__()
-        self.num_class = num_class
-        self.layers = nn.ModuleList()
-        self.name = "hete2homo"+str(len(proj_dim_dict['net'])-1)+"_"+gnn+"_mlp"+ \
-                    str(len(cmlp_dim_list))
-        """ feature projection """ 
-        self.layers.append(Hete2HomoLayer(proj_dim_dict, act=nn.ReLU(), 
-                                          has_bn=has_bn, has_l2norm=has_l2norm, dropout=dropout))
-        """ create GNN model """ 
-        if gnn == "gcn":
-            # a 3-layer GCN
-            self.layers.append(GCN(gnn_dim_list[0], gnn_dim_list[1], 
-                                   gnn_dim_list[2], dropout=0.1).to(device))
-        elif gnn == "gat":
-            self.layers.append(GAT(gnn_dim_list[0], gnn_dim_list[1], gnn_dim_list[2], 
-                                   heads=[4, 4, 1], feat_drop=dropout, attn_drop=dropout).to(device))
-        # 2-layer graphSAGE
-        elif gnn == "sage-mean":
-            self.layers.append(GraphSAGE(gnn_dim_list[0], gnn_dim_list[1], gnn_dim_list[2], 1, 
-                                         activation=nn.ReLU(), dropout=dropout, 
-                                         aggregator_type="mean").to(device))
-        elif gnn == "sage-pool":
-            self.layers.append(GraphSAGE(gnn_dim_list[0], gnn_dim_list[1], gnn_dim_list[2], 1, 
-                                         activation=nn.ReLU(), dropout=dropout, 
-                                         aggregator_type="pool").to(device))
-        """ MLP classifier at the last layer """
-        self.layers.append(MLPN(cmlp_dim_list[0], cmlp_dim_list[1:], self.num_class, 
-                                act=nn.ReLU(), use_bn=has_bn, has_l2norm=has_l2norm, 
-                                dropout=dropout).to(device))
-            
-    def forward(self, bg, h_dict):
-        trans_h = self.layers[0](h_dict)
-        dst_h = self.layers[1](bg, trans_h)
-        dst_h = dst_h[-h_dict['net'].shape[0]:]
-        t = self.layers[2](dst_h)
-        return t
+        l = None
+        net_h = torch.cat([dst_h, n_feat], dim=1)
+        h = self.reg_layers[0](net_h)
+        # # assert 0
+        # for i in range(self.num_classes):
+        #     # print('Training class {:d} ...'.format(i))
+        #     regressor = self.reg_layers[i]
+        #     # print("cmask size:", cmask.shape, "net_h size:", net_h.shape,  "dst_h size:", dst_h.shape)
+        
+        #     cmask = indices.squeeze() == i
+        #     # pred_t = (pred_t / pred_t.max()).view(-1, 1)
+        #     # print("pred_t:", pred_t)
+        #     net_h = torch.cat([dst_h[cmask], n_feat[cmask], prob_t[cmask]], dim=1)
+        #     # print("net_h size", net_h.shape, "in class", i)
+        #     h[cmask] = regressor(net_h)
+        return l, h

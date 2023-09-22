@@ -1,4 +1,4 @@
-# GNN4RC utils - Python scripts to convert circuit schematic to a DGL graph
+# GNN4RC utils - Python scripts converting circuit schematic to a DGL graph
 This folder contains several useful python scripts that can handle the SPICE netlist into a DGL graph. We wish them can help with circuits netlist conversion, and reduce time cost of developing a EDA tool.
 
 ## subckt.py

@@ -76,8 +76,8 @@ def read_spf(filename):
     #     
 
 if __name__ == '__main__':
-    moduleName = 'sram_sp_8192w' #'ultra_8T_macro' #'pe_macro2' # 'ssram' #'8T_digitized_timing_top_fast' #'array_128_32_8t'
-    subcktList, topSubIdx = read_cdl('/data1/shenshan/SPF_examples_cdlspf/CDL_files/sram_sp_8192w/'+moduleName+'.cdl', moduleName)
+    moduleName = 'ssram' #'pe_macro2' #'ultra_8T_macro' #'sram_sp_8192w' #'array_128_32_8t' #'8T_digitized_timing_top_fast' # ''ultra_8T_macro' # 
+    subcktList, topSubIdx = read_cdl('/data1/shenshan/SPF_examples_cdlspf/CDL_files/SSRAM/'+moduleName+'.cdl', moduleName)
     # subIdx = -1
     # # moduleName = 'front_8T_digitized_timing_top_256_fast'
     # for subIdx, subckt in enumerate(subcktList):
@@ -90,7 +90,7 @@ if __name__ == '__main__':
     # assert 0
     print('Reading SPF file...')
     # moduleName = '8T_digitized_timing_top_fast'
-    net_cap_dict = read_spf('/data1/shenshan/SPF_examples_cdlspf/SPF_files/sram_sp_8192w/'+moduleName+'.spf')
+    net_cap_dict = read_spf('/data1/shenshan/SPF_examples_cdlspf/SPF_files/SSRAM/'+moduleName+'.spf')
     assert len(net_cap_dict)
     
     print('Calling findInterNetName...')

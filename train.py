@@ -3,7 +3,7 @@ import torch.nn as nn
 import matplotlib.pyplot as plt
 import seaborn as sns
 import sklearn.metrics
-from SRAM_dataset import SRAMDataset
+from SRAM_dataset import SRAMDataset, SRAMDatasetList
 from focal_loss_pytorch.focalloss import FocalLoss
 import copy
 from dgl.dataloading import DataLoader
@@ -15,6 +15,7 @@ import os
 import matplotlib as mpl
 from regression import validation_caps, ud_loss
 from models import NetCapPredictor
+import random
 
 def plot_confmat(y_true, y_pred, metrics, pltname):
     plt.style.use('seaborn-darkgrid')
@@ -107,17 +108,11 @@ def plot_metric_log(metric_log: dict, name):
     plt.savefig("data/plots/train_log_" + name + ".png", dpi=500, bbox_inches='tight')
     plt.close(fig)
 
-def train(dataset: SRAMDataset, model, device):
+def train(dataset: SRAMDatasetList, datasetTest: SRAMDatasetList, model, device):
     start = datetime.now()
-    bg = dataset._bg.to(device)
-    h_dict = dataset.get_feat_dict()
-    labels = dataset.get_labels().to(device)
-    targets = dataset.get_targets().to(device)
-    # get train/validation split
-    train_nids, val_nids, test_nids = dataset.get_nids()
-    train_nids = torch.cat((train_nids, val_nids))
+    # train_nids = torch.cat((train_nids, val_nids))
     loss_fcn1 = FocalLoss(gamma=2, alpha=dataset.alpha)
-    weights = dataset.alpha.expand(len(labels), len(dataset.alpha)).gather(1,labels)
+    
     # print("weights:", weights)
     # print("weights shape:", weights.shape)
     # assert 0
@@ -146,38 +141,70 @@ def train(dataset: SRAMDataset, model, device):
     ### training loop ###
     for epoch in range(max_epoch):
         model.train()
-    
         val_loss = 0
         optimizer.zero_grad()
-        
-        t, h = model(h_dict, bg)
-        loss_c = loss_fcn1(t[train_nids], labels[train_nids].squeeze()) 
-        loss_r = loss_fcn2(h[train_nids], targets[train_nids], weights=weights[train_nids])
-        print("loss c:", loss_c.item(), "loss r:", loss_r.item())
-        loss = loss_c + loss_r
-        val_loss = loss.item()
-        loss.backward()
-        optimizer.step()
-        scheduler.step()
-        
-        ### do validations and evaluations ###
-        model.eval()
+        iList = [0, 1]
+        random.shuffle(iList)
+        # dataset loop
+        for i in iList:
+            bg = dataset.bgList[i]
+            h_dict = dataset.featDictList[i]
+            labels = dataset.labelList[i]
+            targets = dataset.targetList[i]
+            # get train/validation split
+            train_nids = dataset.nidTrainList[i]
+            val_nids = dataset.nidValList[i]
+            alpha = dataset.alpha
+            weights = alpha.expand(len(labels), len(alpha)).gather(1,labels)
+            t, h = model(h_dict, bg)
+            loss_c = loss_fcn1(t[train_nids], labels[train_nids].squeeze()) 
+            loss_r = loss_fcn2(h[train_nids], targets[train_nids], weights=weights[train_nids])
+            # print("nan h:", h[h == torch.nan], "nan tar:", targets[targets == torch.nan],
+            #       "nan weights:", weights[weights == torch.nan])
+            print(dataset.nameList[i], "loss c:", loss_c.item(), "loss r:", loss_r.item())
+            
+            loss = 0.2*loss_c + 0.8*loss_r
+            val_loss = loss.item()
+            loss.backward()
+            optimizer.step()
+            scheduler.step()
+            
+            ### do validations and evaluations ###
+            model.eval()
 
-        print('Validating...')
-        logits, clogits = model(h_dict, bg)
-        metrics = validation(logits, labels, mask=test_nids, pltname=model.name+"_conf_matrix_valid")
-        metric_log['train_loss'].append(val_loss)
-        metric_log['val_acc'].append(metrics['acc'])
-        metric_log['val_f1'].append(metrics['f1_macro'])
-        print("|| Epoch {:05d} | Loss {:.4f} | mean accuracy {:.2f}%  | weighted f1 score {:.2f} | f1 macro {:.2f} ||"
-              .format(epoch,     val_loss,     metrics['acc']*100, 
-                      metrics['f1_weighted'],  metrics['f1_macro']))
+            print('Validating...')
+            logits, clogits = model(h_dict, bg)
+            metrics = validation(logits, labels, mask=val_nids, 
+                                 pltname=model.name+"_conf_matrix_valid")
+            metric_log['train_loss'].append(val_loss)
+            metric_log['val_acc'].append(metrics['acc'])
+            metric_log['val_f1'].append(metrics['f1_macro'])
+            print("|| Epoch {:05d} | Loss {:.4f} | mean accuracy {:.2f}%  | weighted f1 score {:.2f} | f1 macro {:.2f} ||"
+                .format(epoch,     val_loss,     metrics['acc']*100, 
+                        metrics['f1_weighted'],  metrics['f1_macro']))
 
-        metrics = validation_caps(clogits, targets, 1, mask=test_nids, pltname="err_in_eval_"+str(1))
-        print("|| train/test time {:s}/{:s} | mean error {:.2f}%  | max error {:.2f}% ||"
-                .format(str(datetime.now()-start), str(datetime.now()-start), 
-                        metrics['mean_err']*100, metrics['max_err']*100))
-        
+            metrics = validation_caps(clogits, targets, 1, mask=val_nids, pltname="err_in_eval_"+str(1))
+            print("|| train/test time {:s}/{:s} | mean error {:.2f}%  | max error {:.2f}% ||"
+                    .format(str(datetime.now()-start), str(datetime.now()-start), 
+                            metrics['mean_err']*100, metrics['max_err']*100))
+            
+        # model.eval()
+        # print('Testing...')
+        # # test dataset
+        # for i in range(3):
+        #     bg = datasetTest.bgList[i]
+        #     h_dict = datasetTest.featDictList[i]
+        #     labels = datasetTest.labelList[i]
+        #     targets = datasetTest.targetList[i]
+        #     logits, clogits = model(h_dict, bg)
+        #     metrics = validation(logits, labels, mask=None, 
+        #                          pltname=model.name+"_test_conf_matrix_valid")
+        #     print("|| Test | mean accuracy {:.2f}%  | weighted f1 score {:.2f} | f1 macro {:.2f} ||"
+        #         .format(epoch, metrics['acc']*100, metrics['f1_weighted'], metrics['f1_macro']))
+        #     metrics = validation_caps(clogits, targets, 1, mask=None, 
+        #                               pltname="err_in_test_"+str(1))
+        #     print("|| Test | mean error {:.2f}%  | max error {:.2f}% ||"
+        #             .format(metrics['mean_err']*100, metrics['max_err']*100))
         # # for ealy stop with 25 patience
         # if ((best_val_loss > val_loss) or 
         #     (best_val_metrics['f1_macro'] < metrics['f1_macro'])) and (epoch > 50):
@@ -246,12 +273,16 @@ def train(dataset: SRAMDataset, model, device):
 
 if __name__ == '__main__':
     # device = torch.device('cuda:6' if torch.cuda.is_available() else 'cpu')
-    device = torch.device('cpu')
-    dataset = SRAMDataset(name='sandwich', raw_dir='/data1/shenshan/RCpred')
+    device = torch.device('cpu') 
+    #/data1/shenshan/RCpred/ #/data1/shenshan/SPF_examples_cdlspf/Python_data/
+    #dataset = SRAMDataset(name='ultra_8T', raw_dir='/data1/shenshan/RCpred/')
+    dataset = SRAMDatasetList(device, test_ds=False)
+    datasetTest = SRAMDatasetList(device, test_ds=True, featMax=dataset.featMax)
+    # assert 0
     linear_dict = {'device': [dataset._d_feat_dim, 64, 64], 
                    'inst':   [dataset._i_feat_dim, 64, 64], 
                    'net':    [dataset._n_feat_dim, 64, 64]}
-    model = NetCapPredictor(num_class=dataset._num_classes, proj_dim_dict=linear_dict, 
-                            gnn='sage-mean', has_l2norm=False, has_bn=True, dropout=0.1, 
+    model = NetCapPredictor(num_classes=dataset._num_classes, proj_dim_dict=linear_dict, 
+                            gnn='sage-mean', has_l2norm=False, has_bn=False, dropout=0.1, 
                             device=device)
-    train(dataset, model, device)
+    train(dataset, datasetTest, model, device)
