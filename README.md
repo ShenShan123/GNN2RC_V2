@@ -1,8 +1,12 @@
 <h2 align="center"> Parasitic Capacitance and Risistance Predictor Based on GNN </h2>
 ** This is GPU version with mini-batch training of GNN4RC **
+
 # We change the training strategy to unifiy training
+
 # We merge 3 datasets into a dataset list
+
 # TODO:
+
     ## original -- cuda1 pid=8182 9-14 21:28
     ## settings of regressors
     ## layer number of GNN
