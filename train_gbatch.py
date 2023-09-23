@@ -102,9 +102,9 @@ def evaluation_c(dataloader: dgl.dataloading.DataLoader, model: NetCapPredictor,
             # metrics = validation_caps(h, targets, 0)
             # mape += metrics['mean_err']
             # mape_max = max(mape_max, metrics['max_err'])
-            if loaderIdx % 400 == 0:
-                print("labels:", labels.squeeze()[:10])
-                print("l pred:", l.argmax(dim=1).squeeze()[:10])
+            # if loaderIdx % 400 == 0:
+            #     print("labels:", labels.squeeze()[:10])
+            #     print("l pred:", l.argmax(dim=1).squeeze()[:10])
                 # print("targets:", targets.squeeze()[:10])
                 # print("t pred:", h.squeeze()[:10])
             # assert 0
