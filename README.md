@@ -19,4 +19,4 @@
 
     ## undersampling in training set -- pid:12846
     ## remove classification stage -- cuda1 9-20 14:04 pid:19394
-    ## 
+    ## only classification stage, 2 classes for net caps, divided by 10fF

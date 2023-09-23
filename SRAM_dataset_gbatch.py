@@ -142,7 +142,7 @@ class SRAMDataset(DGLDataset):
         print('max labels:{:.2f} with index:{:d}; min labels:{:.2f} with index:{:d}'
               .format(max_l.item(), max_i.item(), min_l.item(),min_i.item()))
         # classificating according to the magnitude of the net capacitance
-        self._num_classes = 5
+        # self._num_classes = 5
         self._labels = None
         # self.get_labels()
         self._bg.ndata['label'] =  torch.cat((torch.ones((self._num_d+self._num_i, 1), dtype=torch.int32)*-1, 
@@ -160,25 +160,25 @@ class SRAMDataset(DGLDataset):
             self._bg.ndata['val_mask'][torch.tensor(nids)] = True
             # print("targets:", self._bg.ndata['y'][self._bg.ndata['train_mask']])
         else:
-            # self._train_nids, self._val_nids = train_test_split(nids, test_size=0.2, 
-            #                                     random_state=42, stratify=self._labels)
+            train_nids, val_nids = train_test_split(nids, test_size=0.2, 
+                                                    random_state=42, stratify=self._labels)
         # self._train_nids, self._val_nids = train_test_split(nids, test_size=0.25, 
         #                                     random_state=22, stratify=self._labels[train_nids])
-            train_nids = torch.empty([0], dtype=torch.int32)
-            val_nids = torch.empty([0], dtype=torch.int32)
-            # the node order in the hetograph is 'device', 'inst', 'net'
-            for i in range(self._num_classes):
-                c1_idx = (self._bg.ndata['label'] == i).squeeze().nonzero().squeeze()
-                c1_idx = c1_idx[torch.randperm(len(c1_idx))]
-                if i == 0 or i == 1:
-                    train_nids = torch.cat((train_nids, c1_idx[:int(0.02*len(c1_idx))]), dim=0)
-                    val_nids = torch.cat((val_nids, c1_idx[int(0.02*len(c1_idx)):]), dim=0)
-                elif i > 1:
-                    train_nids = torch.cat((train_nids, c1_idx[:int(0.2*len(c1_idx))]), dim=0)
-                    val_nids = torch.cat((val_nids, c1_idx[int(0.2*len(c1_idx)):]), dim=0)
+            # train_nids = torch.empty([0], dtype=torch.int32)
+            # val_nids = torch.empty([0], dtype=torch.int32)
+            # # the node order in the hetograph is 'device', 'inst', 'net'
+            # for i in range(self._num_classes):
+            #     c1_idx = (self._bg.ndata['label'] == i).squeeze().nonzero().squeeze()
+            #     c1_idx = c1_idx[torch.randperm(len(c1_idx))]
+            #     if i == 0 or i == 1:
+            #         train_nids = torch.cat((train_nids, c1_idx[:int(0.02*len(c1_idx))]), dim=0)
+            #         val_nids = torch.cat((val_nids, c1_idx[int(0.02*len(c1_idx)):]), dim=0)
+            #     elif i > 1:
+            #         train_nids = torch.cat((train_nids, c1_idx[:int(0.2*len(c1_idx))]), dim=0)
+            #         val_nids = torch.cat((val_nids, c1_idx[int(0.2*len(c1_idx)):]), dim=0)
 
-            print("train_nids:", train_nids)
-            print("val_nids:", val_nids)
+            # print("train_nids:", train_nids)
+            # print("val_nids:", val_nids)
             self._bg.ndata['train_mask'][train_nids] = True
             self._bg.ndata['val_mask'][val_nids] = True
             # assert 0
@@ -221,7 +221,8 @@ class SRAMDataset(DGLDataset):
             targets = self._targets[mask]
         
         labels = torch.zeros(targets.shape, dtype=torch.int32)
-        binedges = [0.01, 0.1, 1.0, 10.0, 100.0, torch.inf]
+        # binedges = [0.01, 0.1, 1.0, 10.0, 100.0, torch.inf]
+        binedges = [0.01, 10.0, torch.inf] # change 5 classes into 2 classes
         # binedges = [1e-2, 1e-1, 1e0, 1e1, 1e2, 1e3, 1e4, 1e5, 1e6]
         class_num = []
         for i in range(len(binedges)-1):
@@ -235,6 +236,7 @@ class SRAMDataset(DGLDataset):
         
         self._labels = labels
         self._class_num = torch.tensor(class_num)
+        self._num_classes = len(class_num)
         print('class distribution:', class_num)
         # assert 0
         class_distr = torch.tensor([self._num_n / item for item in class_num])
@@ -286,9 +288,9 @@ class SRAMDatasetList():
     def __init__(self, device=torch.device('cuda:0'), test_ds="False", featMax={}):
         super(SRAMDatasetList).__init__()
         if not test_ds:
-            datasets = [SRAMDataset(name='ultra_8T', raw_dir='/data1/shenshan/SPF_examples_cdlspf/Python_data/'),]
-                        # SRAMDataset(name='sandwich', raw_dir='/data1/shenshan/SPF_examples_cdlspf/Python_data/'),
-                        # SRAMDataset(name='sram_sp_8192w', raw_dir='/data1/shenshan/SPF_examples_cdlspf/Python_data/')]
+            datasets = [SRAMDataset(name='ultra_8T', raw_dir='/data1/shenshan/SPF_examples_cdlspf/Python_data/'),
+                        SRAMDataset(name='sandwich', raw_dir='/data1/shenshan/SPF_examples_cdlspf/Python_data/'),
+                        SRAMDataset(name='sram_sp_8192w', raw_dir='/data1/shenshan/SPF_examples_cdlspf/Python_data/')]
         else:
             datasets = [SRAMDataset(name='ssram', raw_dir='/data1/shenshan/SPF_examples_cdlspf/Python_data/'),
                         SRAMDataset(name='array_128_32_8t', raw_dir='/data1/shenshan/SPF_examples_cdlspf/Python_data/'),
@@ -312,7 +314,8 @@ class SRAMDatasetList():
         self._num_i = []
         self._tot_num_d = []
         self.num_nodes = 0
-        self.class_distr = torch.zeros((5))
+        self._num_classes = datasets[0]._num_classes
+        self.class_distr = torch.zeros((self._num_classes))
         # tot_nodes = 0
         for i, ds in enumerate(datasets):
             self.name += ds.name + "_"
@@ -343,7 +346,6 @@ class SRAMDatasetList():
         self._d_feat_dim = datasets[0]._d_feat_dim
         self._n_feat_dim = datasets[0]._n_feat_dim
         self._i_feat_dim = datasets[0]._i_feat_dim
-        self._num_classes = 5
         self.feat_max_norm(test_ds=test_ds)
         # assert 0
         # the alpha used in focal loss, which is the recipcal of the class fraction

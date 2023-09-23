@@ -68,7 +68,8 @@ def validation(logits, labels, mask=None, num_classes=5, pltname="conf_matrix_va
 #         return logits, net_h
 
 
-def evaluation(dataloader: dgl.dataloading.DataLoader, model: NetCapPredictor, class_distr: torch.Tensor):
+def evaluation_c(dataloader: dgl.dataloading.DataLoader, model: NetCapPredictor, 
+                 class_distr: torch.Tensor, pltname, epoch):
     # l_pred = torch.empty((0,5), dtype=torch.int32, device=dataloader.device)
     # h_pred = torch.empty((0,1), dtype=torch.float32, device=dataloader.device)
     # labels = torch.empty((0,1), dtype=torch.int32, device=dataloader.device)
@@ -89,23 +90,23 @@ def evaluation(dataloader: dgl.dataloading.DataLoader, model: NetCapPredictor, c
             # l_pred = torch.cat((l_pred, l), dim=0)
             # h_pred = torch.cat((h_pred, h), dim=0)
             labels = blocks[-1].dstdata['label']
-            targets = blocks[-1].dstdata['y']
+            # targets = blocks[-1].dstdata['y']
             loaderIdx += 1
             # print("loaderIdx in eval", loaderIdx)
-            metrics = validation(l, labels)
+            metrics = validation(l, labels, num_classes=len(class_distr))
             acc += metrics['acc']
             # print("mcm:", metrics["mcm"])
             mcm += torch.tensor(metrics["mcm"])
             # print("targets:", targets)
             # print("tar pred:", h)
-            metrics = validation_caps(h, targets, 0)
-            mape += metrics['mean_err']
-            mape_max = max(mape_max, metrics['max_err'])
+            # metrics = validation_caps(h, targets, 0)
+            # mape += metrics['mean_err']
+            # mape_max = max(mape_max, metrics['max_err'])
             if loaderIdx % 400 == 0:
                 print("labels:", labels.squeeze()[:10])
                 print("l pred:", l.argmax(dim=1).squeeze()[:10])
-                print("targets:", targets.squeeze()[:10])
-                print("t pred:", h.squeeze()[:10])
+                # print("targets:", targets.squeeze()[:10])
+                # print("t pred:", h.squeeze()[:10])
             # assert 0
         # return l_pred, h_pred, labels, targets
         acc /= loaderIdx
@@ -233,19 +234,19 @@ def train(dataset: SRAMDatasetList, datasetTest: SRAMDatasetList, model, device)
     # print("weights:", weights)
     # print("weights shape:", weights.shape)
     # assert 0
-    loss_fcn2 = ud_loss
+    # loss_fcn2 = ud_loss
     # loss_fcn = F.cross_entropy
     optimizer = torch.optim.Adam(model.parameters(), lr=1e-2, weight_decay=5e-4)
     max_epoch = 500
     # scheduler = torch.optim.lr_scheduler.CosineAnnealingLR(optimizer, float(max_epoch), 1e-3)
-    alpha_weights = 1.0 / dataset.alpha.expand(batch_size, len(dataset.alpha)).detach()
-    # print("weights", alpha_weights[0])
-    # alpha_weights2 = F.softmax(alpha_weights, dim=1)
-    # print("weights after softmax", alpha_weights2[0])
-    alpha_weights = (1-alpha_weights)**2 
-    print("alpha_weights after gamma", alpha_weights[0])
-    # assert 0
-    alpha_weights = alpha_weights.to(device)
+    # alpha_weights = 1.0 / dataset.alpha.expand(batch_size, len(dataset.alpha)).detach()
+    # # print("weights", alpha_weights[0])
+    # # alpha_weights2 = F.softmax(alpha_weights, dim=1)
+    # # print("weights after softmax", alpha_weights2[0])
+    # alpha_weights = (1-alpha_weights)**2 
+    # print("alpha_weights after gamma", alpha_weights[0])
+    # # assert 0
+    # alpha_weights = alpha_weights.to(device)
     # best_val_loss = torch.inf
     # best_test_metrics = {'acc': 0.0, 'f1_macro': 0.0, 'f1_weighted': 0.0}
     # best_val_metrics = {'acc': 0.0, 'f1_macro': 0.0, 'f1_weighted': 0.0}
@@ -289,24 +290,24 @@ def train(dataset: SRAMDatasetList, datasetTest: SRAMDatasetList, model, device)
                          blocks)
             # print("h size", h.shape)
             labels = blocks[-1].dstdata['label'].long()
-            targets = blocks[-1].dstdata['y']
+            # targets = blocks[-1].dstdata['y']
             
             # weights /= weights.squeeze().sum()
-            weights = alpha_weights[:len(labels)]
-            weights = weights.gather(1,labels)
+            # weights = alpha_weights[:len(labels)]
+            # weights = weights.gather(1,labels)
             # print("labels:", labels)
             # print("l", l)
             # print("h", h)
             # print("targets:", targets)
             # print("weights after gather", weights[0])
             # assert 0
-            # loss_c = loss_fcn1(l, labels.squeeze()) 
-            loss_r = loss_fcn2(h, targets, weights=weights)
+            loss_c = loss_fcn1(l, labels.squeeze()) 
+            # loss_r = loss_fcn2(h, targets, weights=weights)
             # if loaderIdx % 400 == 0:
             #     # print("loaderIdx", loaderIdx, "loss c:", loss_c.item(), "loss r:", loss_r.item())
             #     print("loaderIdx", loaderIdx, "loss r:", loss_r.item())
             loaderIdx += 1
-            loss = loss_r
+            loss = loss_c
             train_loss += loss.item()
             loss.backward()
             optimizer.step()
@@ -315,12 +316,13 @@ def train(dataset: SRAMDatasetList, datasetTest: SRAMDatasetList, model, device)
         ### do validations and evaluations ###
         model.eval()
         print('Validating...')
-        mape, mape_max = evaluation_r(dataloader_val, model, dataset.class_distr, dataset.name+model.name+"_downsample", epoch)
+        acc, f1_weighted, f1_macro, mape, mape_max = evaluation_c(dataloader_val, model, dataset.class_distr, 
+                                                                  dataset.name+model.name+"_downsample", epoch)
         # assert 0
-        # print("|| Epoch {:05d} | Loss {:.4f} | class acc {:.2f}%  | class f1_weighted {:.2f} | f1_macro {:.2f} | mape {:.2f}% | mape_max {:.2f}% ||"
-        #       .format(epoch, train_loss/loaderIdx,    acc*100,             f1_weighted,             f1_macro,         mape*100,      mape_max*100))
-        print("|| Epoch {:05d} | Loss {:.4f} | mape {:.2f}% | mape_max {:.2f}% ||"
-              .format(epoch, train_loss/loaderIdx,  mape*100, mape_max*100))
+        print("|| Epoch {:05d} | Loss {:.4f} | class acc {:.2f}%  | class f1_weighted {:.2f} | f1_macro {:.2f} ||"
+              .format(epoch, train_loss/loaderIdx,    acc*100,             f1_weighted,             f1_macro))
+        # print("|| Epoch {:05d} | Loss {:.4f} | mape {:.2f}% | mape_max {:.2f}% ||"
+        #       .format(epoch, train_loss/loaderIdx,  mape*100, mape_max*100))
         
         # print("|| train/test time {:s}/{:s} | mean error {:.2f}%  | max error {:.2f}% ||"
         #         .format(str(datetime.now()-start), str(datetime.now()-start), 
@@ -328,18 +330,18 @@ def train(dataset: SRAMDatasetList, datasetTest: SRAMDatasetList, model, device)
         
         # testing
         print('Testing...')
-        mape, mape_max = evaluation_r(dataloader_test, model, dataset.class_distr, datasetTest.name+model.name+"_downsample", epoch)
+        acc, f1_weighted, f1_macro, mape, mape_max = evaluation_c(dataloader_test, model, dataset.class_distr, 
+                                                                  datasetTest.name+model.name+"_downsample", epoch)
 
         # print("l_pred:", l_pred.squeeze())
         # print("labels:", labels.squeeze())
-        # print("|| Test Epoch {:05d} | mean accuracy {:.2f}%  | weighted f1 score {:.2f} | f1 macro {:.2f} ||"
-        #     .format(epoch,    metrics['acc']*100, 
-        #             metrics['f1_weighted'],  metrics['f1_macro']))
+        print("|| Test Epoch {:05d} | mean accuracy {:.2f}%  | weighted f1 score {:.2f} | f1 macro {:.2f} ||"
+              .format(epoch,    acc*100,  f1_weighted,  f1_macro))
         
         # print("|| Test | runtime {:s} | class acc {:.2f}%  | class f1_weighted {:.2f} | f1_macro {:.2f} | mape {:.2f}% | mape_max {:.2f}% ||"
         #       .format(str(datetime.now()-start), acc*100,    f1_weighted,               f1_macro,         mape*100,      mape_max*100))
-        print("|| Test | runtime {:s} | mape {:.2f}% | mape_max {:.2f}% ||"
-              .format(str(datetime.now()-start), mape*100, mape_max*100))
+        # print("|| Test | runtime {:s} | mape {:.2f}% | mape_max {:.2f}% ||"
+        #       .format(str(datetime.now()-start), mape*100, mape_max*100))
 
         # metrics = validation_caps(h_pred, targets, 1, mask=None, pltname="err_in_eval_"+str(1))
         # print("h_pred:", h_pred.squeeze())
@@ -355,7 +357,7 @@ if __name__ == '__main__':
     # mcm = sklearn.metrics.multilabel_confusion_matrix([0,1,2,3,3], [0,0,2,3,3], labels=[i for i in range(5)])
     # print(mcm)
     # assert 0
-    device = torch.device('cuda:1') 
+    device = torch.device('cuda:0') 
     dataset = SRAMDatasetList(device=device, test_ds=False)
     datasetTest = SRAMDatasetList(device=device, test_ds=True, featMax=dataset.featMax)
     # assert 0

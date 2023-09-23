@@ -301,23 +301,23 @@ class NetCapPredictor(nn.Module):
             self.layers.append(GraphSAGE(gnn_dim_list[0], gnn_dim_list[1], gnn_dim_list[2], 1, 
                                          activation=nn.ReLU(), dropout=dropout, 
                                          aggregator_type="pool").to(device))
-        # """ MLP classifier at the last layer """
-        # self.layers.append(MLPN(cmlp_dim_list[0], cmlp_dim_list[1:], self.num_classes, 
-        #                         act=nn.ReLU(), use_bn=has_bn, has_l2norm=has_l2norm, 
-        #                         dropout=dropout).to(device))
+        """ MLP classifier at the last layer """
+        self.layers.append(MLPN(cmlp_dim_list[0], cmlp_dim_list[1:], self.num_classes, 
+                                act=nn.ReLU(), use_bn=has_bn, has_l2norm=has_l2norm, 
+                                dropout=dropout).to(device))
         
-        """ MLP regressor """
-        self.reg_layers = nn.ModuleList()
-        # for i in range(self.num_classes):
-        #     mlp_feats = [64, 128, 128, 64]
-        #     if i > 2:
-        #         dropout = 0.0
-        #     else:
-        #         dropout = 0.5
-        ### we have changed the input dim
-        self.reg_layers.append(MLPN(proj_dim_dict['net'][0]+reg_dim_list[0], reg_dim_list[1:-1], 1, 
-                                    act=nn.ReLU(), use_bn=has_bn, has_l2norm=False, 
-                                    dropout=dropout).to(device))
+        # """ MLP regressor """
+        # self.reg_layers = nn.ModuleList()
+        # # for i in range(self.num_classes):
+        # #     mlp_feats = [64, 128, 128, 64]
+        # #     if i > 2:
+        # #         dropout = 0.0
+        # #     else:
+        # #         dropout = 0.5
+        # ### we have changed the input dim
+        # self.reg_layers.append(MLPN(proj_dim_dict['net'][0]+reg_dim_list[0], reg_dim_list[1:-1], 1, 
+        #                             act=nn.ReLU(), use_bn=has_bn, has_l2norm=False, 
+        #                             dropout=dropout).to(device))
     """
     def forward(self, h_dict, bg):
         trans_h = self.layers[0](h_dict)
@@ -358,13 +358,13 @@ class NetCapPredictor(nn.Module):
         # print("blocks[-1] type:", blocks[-1].dstdata['_TYPE'])
         # print("blocks[-1] type size:", blocks[-1].dstdata['_TYPE'].shape)
         # dst_h = dst_h[blocks[-1].ndata["_TYPE"]["_N"] == 2]
-        # l = self.layers[2](dst_h)
-        # prob_t, indices = l.max(dim=1, keepdim=True)
-        # h = torch.zeros((l.shape[0], 1), device=feats.device)
+        l = self.layers[2](dst_h)
+        prob_t, indices = l.max(dim=1, keepdim=True)
+        h = torch.zeros((l.shape[0], 1), device=feats.device)
 
-        l = None
-        net_h = torch.cat([dst_h, n_feat], dim=1)
-        h = self.reg_layers[0](net_h)
+        # l = None
+        # net_h = torch.cat([dst_h, n_feat], dim=1)
+        # h = self.reg_layers[0](net_h)
         # # assert 0
         # for i in range(self.num_classes):
         #     # print('Training class {:d} ...'.format(i))
