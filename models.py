@@ -360,7 +360,7 @@ class NetCapPredictor(nn.Module):
         # dst_h = dst_h[blocks[-1].ndata["_TYPE"]["_N"] == 2]
         l = self.layers[2](dst_h)
         prob_t, indices = l.max(dim=1, keepdim=True)
-        h = torch.zeros((l.shape[0], 1), device=feats.device)
+        # h = torch.zeros((l.shape[0], 1), device=feats.device)
 
         # l = None
         # net_h = torch.cat([dst_h, n_feat], dim=1)
@@ -377,4 +377,57 @@ class NetCapPredictor(nn.Module):
         #     net_h = torch.cat([dst_h[cmask], n_feat[cmask], prob_t[cmask]], dim=1)
         #     # print("net_h size", net_h.shape, "in class", i)
         #     h[cmask] = regressor(net_h)
-        return l, h
+        return l, dst_h
+    
+class NetCapRegressor(nn.Module):
+    def __init__(self, num_classes, reg_dim_list=[64, 128, 128, 64, 1],
+                 has_l2norm=False, has_bn=False, device=torch.device('cuda:0')):
+        super(NetCapRegressor, self).__init__()
+        self.num_classes = num_classes
+        self.name = "_regmlp"+str(len(reg_dim_list)-1)
+        
+        """ MLP regressor """
+        self.reg_layers = nn.ModuleList()
+        for i in range(self.num_classes):
+            # mlp_feats = [64, 128, 128, 64]
+            if i == 0:
+                dropout = 0.5
+            else:
+                dropout = 0.0
+            ## we have changed the input dim
+            self.reg_layers.append(MLPN(reg_dim_list[0], reg_dim_list[1:-1], reg_dim_list[-1], 
+                                        act=nn.ReLU(), use_bn=False, has_l2norm=False, 
+                                        dropout=dropout).to(device))
+    
+    def forward(self, dims, dst_h, l, blocks):
+        # # print("blocks[0].srcdata[x]",blocks[0].srcdata['x'])
+        # feats = blocks[0].srcdata['x']
+        # ntypes = blocks[0].srcdata['_TYPE']
+        # # print("blocks[0].srcdata[_TYPE]", blocks[0].srcdata['_TYPE'])
+        # proj_h = self.layers[0](feats, ntypes, dims)
+        # # print("proj_h size:", proj_h.shape)
+        # dst_h = self.layers[1](blocks, proj_h)
+        # print("dst_h size:", dst_h.shape)
+        # the original features of net nodes
+        n_feat = blocks[-1].dstdata['x']
+        # n_feat = n_feat[blocks[-1].ndata["_TYPE"]["_N"] == 2]
+        n_feat = n_feat[:,0:dims[-1]]
+
+        # l = self.layers[2](dst_h)
+        prob_t, indices = l.max(dim=1, keepdim=True)
+        h = torch.zeros((l.shape[0], 1), device=blocks[0].device)
+        # net_h = torch.cat([dst_h, n_feat], dim=1)
+        
+        # assert 0
+        for i in range(self.num_classes):
+            # print('Training class {:d} ...'.format(i))
+            regressor = self.reg_layers[i]
+            # print("cmask size:", cmask.shape, "net_h size:", net_h.shape,  "dst_h size:", dst_h.shape)
+        
+            cmask = indices.squeeze() == i
+            # pred_t = (pred_t / pred_t.max()).view(-1, 1)
+            # print("pred_t:", pred_t)
+            net_h = torch.cat([dst_h[cmask], n_feat[cmask], prob_t[cmask]], dim=1)
+            # print("net_h size", net_h.shape, "in class", i)
+            h[cmask] = regressor(net_h)
+        return h

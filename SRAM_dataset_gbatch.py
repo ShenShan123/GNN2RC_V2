@@ -288,9 +288,9 @@ class SRAMDatasetList():
     def __init__(self, device=torch.device('cuda:0'), test_ds="False", featMax={}):
         super(SRAMDatasetList).__init__()
         if not test_ds:
-            datasets = [SRAMDataset(name='ultra_8T', raw_dir='/data1/shenshan/SPF_examples_cdlspf/Python_data/'),
-                        SRAMDataset(name='sandwich', raw_dir='/data1/shenshan/SPF_examples_cdlspf/Python_data/'),
-                        SRAMDataset(name='sram_sp_8192w', raw_dir='/data1/shenshan/SPF_examples_cdlspf/Python_data/')]
+            datasets = [SRAMDataset(name='ultra_8T', raw_dir='/data1/shenshan/SPF_examples_cdlspf/Python_data/'),]
+                        # SRAMDataset(name='sandwich', raw_dir='/data1/shenshan/SPF_examples_cdlspf/Python_data/'),
+                        # SRAMDataset(name='sram_sp_8192w', raw_dir='/data1/shenshan/SPF_examples_cdlspf/Python_data/')]
         else:
             datasets = [SRAMDataset(name='ssram', raw_dir='/data1/shenshan/SPF_examples_cdlspf/Python_data/'),
                         SRAMDataset(name='array_128_32_8t', raw_dir='/data1/shenshan/SPF_examples_cdlspf/Python_data/'),

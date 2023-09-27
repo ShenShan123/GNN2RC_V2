@@ -3,19 +3,22 @@ import torch.nn as nn
 import matplotlib.pyplot as plt
 from SRAM_dataset import SRAMDataset
 from datetime import datetime
+from statistics import mean 
 
-def plot_errors(x, y, pltname, c):
+def plot_errors(x, y, label, pltname, epoch):
     plt.grid()
     plt.yscale('log')
     fig, axs = plt.subplots()
-    axs.scatter(x.tolist(), y.tolist(), s=5, marker=".", alpha=0.5)
+    colors = ['tab:blue', 'tab:orange', 'tab:green', 'tab:red', 'tab:purple']
+    clist = [colors[i] for i in label]
+    axs.scatter(x, y, s=5, c=clist, marker=".", alpha=0.5)
     # for ax in axs.flat:
     axs.set(xlabel='relative errors', ylabel='cap (fF)')
 
-    absx = torch.abs(x)
-    max_err, _ = torch.max(absx, dim=0)
-    fig.suptitle('epoch:{:d} mean error:{:.2f}%, max error:{:.2f}%'
-                 .format(c, torch.mean(absx).item()*100, max_err.item()*100))
+    absx = [abs(item) for item in x]
+    max_err = max(absx)
+    fig.suptitle('epoch:{:d}, mean error:{:.2f}%, max error:{:.2f}%'
+                 .format(epoch, mean(absx)*100, max_err*100))
     plt.savefig('./data/plots/'+pltname, dpi=400)
     plt.close(fig)
 

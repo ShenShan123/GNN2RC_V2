@@ -290,62 +290,29 @@ def train(dataset: SRAMDatasetList, datasetTest: SRAMDatasetList, model, modelr,
     ### training loop ###
     for epoch in range(max_epoch):
         model.train()
-        modelr.train()
         train_loss_c = 0
-        train_loss_r = 0
         loaderIdx = 0
         
         # dataset loop
         for input_nodes, output_nodes, blocks in dataloader:
             optimizer.zero_grad()
-            optimizer_r.zero_grad()
-            # print("in nodes:", input_nodes)
-            # print("out nodes:", output_nodes)
-            # print("block[0] ndata:", blocks[0].ndata)
-            # print(blocks)
-            # feats = blocks[0].ndata['x']
-            # ntypes = blocks[0].ndata['_TYPE']
-            # dim_list = [dataset._d_feat_dim, dataset._i_feat_dim, dataset._n_feat_dim]
-            # t, h = model(h_dict, bg)
             l, dst_h = model([dataset._d_feat_dim, dataset._i_feat_dim, dataset._n_feat_dim],
                          blocks)
-            # print("h size", h.shape)
             labels = blocks[-1].dstdata['label'].long()
-            
-            # if loaderIdx % 400 == 0:
-            #     # print("loaderIdx", loaderIdx, "loss c:", loss_c.item(), "loss r:", loss_r.item())
-            #     print("loaderIdx", loaderIdx, "loss r:", loss_r.item())
             loaderIdx += 1
-            # loss = loss_c
-            if epoch % 2 == 0:
-                loss_c = loss_fcn1(l, labels.squeeze()) 
-                train_loss_c += loss_c.item()
-                loss_c.backward(retain_graph=True)
-                optimizer.step()
-            else:
-                targets = blocks[-1].dstdata['y']
-                weights = alpha_weights[:len(labels)]
-                weights = weights.gather(1,labels)
-                h = modelr([dataset._d_feat_dim, dataset._i_feat_dim, dataset._n_feat_dim],
-                            dst_h.detach(), l.detach(), blocks)
-                loss_r = loss_fcn2(h, targets, weights=weights)
-                train_loss_r += loss_r.item()
-                loss_r.backward()
-                optimizer_r.step()
+            loss_c = loss_fcn1(l, labels.squeeze()) 
+            train_loss_c += loss_c.item()
+            loss_c.backward()
+            optimizer.step()
 
         # scheduler.step()
         ### do validations and evaluations ###
         model.eval()
-        modelr.eval()
         print('Validating...')
         acc, f1_weighted, f1_macro, mape, mape_max = evaluation_r(dataloader_val, model, modelr, dataset.class_distr, 
                                                                   dataset.name+model.name, epoch)
-        if epoch % 2 == 0:
-            print("|| Epoch {:05d} | Loss {:.4f} | class acc {:.2f}%  | class f1_weighted {:.2f} | f1_macro {:.2f} ||"
-                .format(epoch, train_loss_c/loaderIdx,    acc*100,             f1_weighted,             f1_macro))
-        else:
-            print("|| Epoch {:05d} | Loss {:.4f} | mape {:.2f}% | mape_max {:.2f}% ||"
-                .format(epoch, train_loss_r/loaderIdx,  mape*100, mape_max*100))
+        print("|| Epoch {:05d} | Loss {:.4f} | class acc {:.2f}%  | class f1_weighted {:.2f} | f1_macro {:.2f} ||"
+            .format(epoch, train_loss_c/loaderIdx,    acc*100,             f1_weighted,             f1_macro))
             
         # print("|| train/test time {:s}/{:s} | mean error {:.2f}%  | max error {:.2f}% ||"
         #         .format(str(datetime.now()-start), str(datetime.now()-start), 
@@ -355,26 +322,49 @@ def train(dataset: SRAMDatasetList, datasetTest: SRAMDatasetList, model, modelr,
         print('Testing...')
         acc, f1_weighted, f1_macro, mape, mape_max = evaluation_r(dataloader_test, model, modelr, dataset.class_distr, 
                                                                   datasetTest.name+model.name, epoch)
+        print("|| Test | runtime {:s} | class acc {:.2f}%  | class f1_weighted {:.2f} | f1_macro {:.2f} ||"
+            .format(str(datetime.now()-start), acc*100,      f1_weighted,               f1_macro))
 
-        # print("l_pred:", l_pred.squeeze())
-        # print("labels:", labels.squeeze())
-        # print("|| Test Epoch {:05d} | mean accuracy {:.2f}%  | weighted f1 score {:.2f} | f1 macro {:.2f} ||"
-        #       .format(epoch,    acc*100,  f1_weighted,  f1_macro))
-        if epoch % 2 == 0:
-            print("|| Test | runtime {:s} | class acc {:.2f}%  | class f1_weighted {:.2f} | f1_macro {:.2f} ||"
-                .format(str(datetime.now()-start), acc*100,      f1_weighted,               f1_macro))
-        else:
-            print("|| Test | runtime {:s} | mape {:.2f}% | mape_max {:.2f}% ||"
-                .format(str(datetime.now()-start), mape*100, mape_max*100))
+        if f1_macro > 0.9:
+            break
 
-        # metrics = validation_caps(h_pred, targets, 1, mask=None, pltname="err_in_eval_"+str(1))
-        # print("h_pred:", h_pred.squeeze())
-        # print("targets:", targets.squeeze())
-        # print("|| Test time {:s}/{:s} | mean error {:.2f}%  | max error {:.2f}% ||"
-        #         .format(str(datetime.now()-start), str(datetime.now()-start), 
-        #                 metrics['mean_err']*100, metrics['max_err']*100))
+    start = datetime.now()
+    print("Training " + modelr.name + " regression at " + start.strftime("%d-%m-%Y_%H:%M:%S"))
+    print('Entering training loop...')
+    ### training loop ###
+    for epoch in range(max_epoch):
+        modelr.train()
+        train_loss_r = 0
+        loaderIdx = 0
+        
+        # dataset loop
+        for input_nodes, output_nodes, blocks in dataloader:
+            optimizer_r.zero_grad()
+            l, dst_h = model([dataset._d_feat_dim, dataset._i_feat_dim, dataset._n_feat_dim],
+                             blocks)
+            h = modelr([dataset._d_feat_dim, dataset._i_feat_dim, dataset._n_feat_dim],
+                        dst_h.detach(), l.detach(), blocks)
+            targets = blocks[-1].dstdata['y']
+            weights = alpha_weights[:len(labels)]
+            weights = weights.gather(1,labels)
+            loss_r = loss_fcn2(h, targets, weights=weights)
+            train_loss_r += loss_r.item()
+            loss_r.backward()
+            optimizer_r.step()
+
+        modelr.eval()
+        print('Validating...')
+        acc, f1_weighted, f1_macro, mape, mape_max = evaluation_r(dataloader_val, model, modelr, dataset.class_distr, 
+                                                                  dataset.name+model.name, epoch)
+        print("|| Epoch {:05d} | Loss {:.4f} | class acc {:.2f}%  | class f1_weighted {:.2f} | f1_macro {:.2f} | mape {:.2f}% | mape_max {:.2f}% ||"
+              .format(epoch, train_loss_r/loaderIdx,    acc*100,             f1_weighted,             f1_macro,  mape*100, mape_max*100))
             
-    # return test_metrics
+        # testing
+        print('Testing...')
+        acc, f1_weighted, f1_macro, mape, mape_max = evaluation_r(dataloader_test, model, modelr, datasetTest.class_distr, 
+                                                                  datasetTest.name+model.name, epoch)
+        print("|| Test | runtime {:s} | class acc {:.2f}%  | class f1_weighted {:.2f} | f1_macro {:.2f} | mape {:.2f}% | mape_max {:.2f}% ||"
+              .format(str(datetime.now()-start), acc*100, f1_weighted, f1_macro, mape*100, mape_max*100))
 
 if __name__ == '__main__':
     # device = torch.device('cuda:6' if torch.cuda.is_available() else 'cpu')
