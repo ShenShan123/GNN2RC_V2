@@ -32,15 +32,15 @@ class SRAMDataset(DGLDataset):
                  raw_dir=None,
                  save_dir=None,
                  force_reload=False,
-                 verbose=True):
+                 verbose=True,
+                 test=False):
+        self.testDS = test
         super(SRAMDataset, self).__init__(name=name,
                                         url=url,
                                         raw_dir=raw_dir,
                                         save_dir=save_dir,
                                         force_reload=force_reload,
                                         verbose=verbose)
-        # self._labels = None
-        # self._bg = None
 
     # no need to download
     def download(self):
@@ -102,7 +102,7 @@ class SRAMDataset(DGLDataset):
         # self._hg = shg
         # self._bg = dgl.reorder_graph(bg)
         
-        ### prepare the feature dict ###
+        """ prepare the feature dict """
         # delete the dummy features in device nodes
         if shg.nodes['device'].data['x'].shape[1] > 15:
             # print("self._d_feat shape", self._d_feat.shape)
@@ -130,7 +130,7 @@ class SRAMDataset(DGLDataset):
         # self._hg.nodes['inst'].data['x'] = self._i_feat
         # self._hg.nodes['device'].data['x'] = self._d_feat
 
-        ### prepare the labels ###
+        """ prepare the labels """
         self._targets = shg.nodes['net'].data['y'].float() * 1000
         # self._hg.nodes['net'].data['y'] = self._targets
         self._bg.ndata['y'] = torch.cat((torch.zeros(self._num_d+self._num_i, 1), 
@@ -142,58 +142,25 @@ class SRAMDataset(DGLDataset):
         print('max labels:{:.2f} with index:{:d}; min labels:{:.2f} with index:{:d}'
               .format(max_l.item(), max_i.item(), min_l.item(),min_i.item()))
         # classificating according to the magnitude of the net capacitance
-        # self._num_classes = 5
         self._labels = None
         # self.get_labels()
         self._bg.ndata['label'] =  torch.cat((torch.ones((self._num_d+self._num_i, 1), dtype=torch.int32)*-1, 
                                               self.get_labels()), dim=0)
-        # self._hg.nodes['net'].data['l'] = self.get_labels()
 
-        ### prepare train/val masks ###
-        self._bg.ndata['train_mask'] = torch.zeros((self._bg.num_nodes()), dtype=bool)
-        self._bg.ndata['val_mask'] = torch.zeros((self._bg.num_nodes()), dtype=bool)
+        """ prepare train/val masks """
+        self._bg.ndata['train_mask'] = torch.zeros((self._bg.num_nodes()), dtype=torch.bool)
+        self._bg.ndata['val_mask'] = torch.zeros((self._bg.num_nodes()), dtype=torch.bool)
         nids = [i for i in range(self._num_d+ self._num_i, self._bg.num_nodes())]
 
-        if (self.name == "array_128_32_8t" or self.name == "8T_digitized_timing_top_fast"
-            or self.name == "ssram"):
+        if self.testDS:
             self._bg.ndata['train_mask'][torch.tensor(nids)] = True
             self._bg.ndata['val_mask'][torch.tensor(nids)] = True
             # print("targets:", self._bg.ndata['y'][self._bg.ndata['train_mask']])
         else:
             train_nids, val_nids = train_test_split(nids, test_size=0.2, 
                                                     random_state=42, stratify=self._labels)
-        # self._train_nids, self._val_nids = train_test_split(nids, test_size=0.25, 
-        #                                     random_state=22, stratify=self._labels[train_nids])
-            # train_nids = torch.empty([0], dtype=torch.int32)
-            # val_nids = torch.empty([0], dtype=torch.int32)
-            # # the node order in the hetograph is 'device', 'inst', 'net'
-            # for i in range(self._num_classes):
-            #     c1_idx = (self._bg.ndata['label'] == i).squeeze().nonzero().squeeze()
-            #     c1_idx = c1_idx[torch.randperm(len(c1_idx))]
-            #     if i == 0 or i == 1:
-            #         train_nids = torch.cat((train_nids, c1_idx[:int(0.02*len(c1_idx))]), dim=0)
-            #         val_nids = torch.cat((val_nids, c1_idx[int(0.02*len(c1_idx)):]), dim=0)
-            #     elif i > 1:
-            #         train_nids = torch.cat((train_nids, c1_idx[:int(0.2*len(c1_idx))]), dim=0)
-            #         val_nids = torch.cat((val_nids, c1_idx[int(0.2*len(c1_idx)):]), dim=0)
-
-            # print("train_nids:", train_nids)
-            # print("val_nids:", val_nids)
             self._bg.ndata['train_mask'][train_nids] = True
             self._bg.ndata['val_mask'][val_nids] = True
-            # assert 0
-        # self._test_mask = torch.zeros(self._num_n, dtype=torch.bool)
-        # self._train_mask = torch.zeros(self._num_n, dtype=torch.bool)
-        # self._val_mask = torch.zeros(self._num_n, dtype=torch.bool)
-        # self._test_mask[self._test_nids] = True
-        # self._train_mask[self._train_nids] = True
-        # self._val_mask[self._val_nids] = True
-        # self._hg.nodes['net'].data['train_mask'] = self._train_mask
-        # self._hg.nodes['net'].data['val_mask'] = self._train_mask
-        # print('# of train/val samples:{:d}/{:d}'
-        #         .format(len(self._train_nids), len(self._val_nids)))#, len(self._test_nids)))
-        # print("_bg ndata:", self._bg.ndata)
-        # assert 0
         return
     
     def get_test_mask(self):
@@ -232,7 +199,6 @@ class SRAMDataset(DGLDataset):
             # avoid zero denominator
             if class_num[-1] == 0:
                 class_num[-1] = 1
-
         
         self._labels = labels
         self._class_num = torch.tensor(class_num)
@@ -285,34 +251,29 @@ class SRAMDataset(DGLDataset):
 
 
 class SRAMDatasetList():
-    def __init__(self, device=torch.device('cuda:0'), test_ds="False", featMax={}):
+    def __init__(self, nameList, device=torch.device('cuda:0'), test_ds="False", featMax={}):
         super(SRAMDatasetList).__init__()
-        if not test_ds:
-            datasets = [SRAMDataset(name='ultra_8T', raw_dir='/data1/shenshan/SPF_examples_cdlspf/Python_data/'),]
-                        # SRAMDataset(name='sandwich', raw_dir='/data1/shenshan/SPF_examples_cdlspf/Python_data/'),
-                        # SRAMDataset(name='sram_sp_8192w', raw_dir='/data1/shenshan/SPF_examples_cdlspf/Python_data/')]
-        else:
-            datasets = [SRAMDataset(name='ssram', raw_dir='/data1/shenshan/SPF_examples_cdlspf/Python_data/'),
-                        SRAMDataset(name='array_128_32_8t', raw_dir='/data1/shenshan/SPF_examples_cdlspf/Python_data/'),
-                        SRAMDataset(name='8T_digitized_timing_top_fast', raw_dir='/data1/shenshan/SPF_examples_cdlspf/Python_data/')]
+        raw_dir = '/data1/shenshan/SPF_examples_cdlspf/Python_data/'
+        datasets = []
+        for name in nameList:
+            datasets.append(SRAMDataset(name=name, raw_dir=raw_dir, test=test_ds))
+                        # SRAMDataset(name='sandwich', raw_dir=raw_dir),
+                        # # SRAMDataset(name='sram_sp_8192w', raw_dir=raw_dir),
+                        # SRAMDataset(name='ssram', raw_dir=raw_dir),
+                        # ]
+        # else:
+        #     datasets = [SRAMDataset(name='sram_sp_8192w', raw_dir=raw_dir, test=True)]
+            # datasets = [SRAMDataset(name='ssram', raw_dir=raw_dir),
+            #             SRAMDataset(name='array_128_32_8t', raw_dir=raw_dir),
+            #             SRAMDataset(name='8T_digitized_timing_top_fast', raw_dir=raw_dir)]
+        assert len(datasets)
         self.name = ""
         self.bgList = []
-        # self.featDict = {'net': torch.empty((0,datasets[0]._n_feat_dim)),
-        #                  'device': torch.empty((0,datasets[0]._d_feat_dim)),
-        #                  'inst': torch.empty((0,datasets[0]._i_feat_dim))}
-        # self.d_feat = torch.empty((0, self._d_feat_dim))
-        # self.i_feat = torch.empty((0, self._i_feat_dim))
-        # self.n_feat = torch.empty((0, self._n_feat_dim))
         self.featMax = featMax
-        # self.labelList = []
-        # self.targetList = []
-        # if not test_ds:
-        #     self.nidTrainList = []
-        #     self.nidValList = []
         self._num_n = []
         self._num_d = []
         self._num_i = []
-        self._tot_num_d = []
+        self._tot_num_n = 0
         self.num_nodes = 0
         self._num_classes = datasets[0]._num_classes
         self.class_distr = torch.zeros((self._num_classes))
@@ -321,28 +282,14 @@ class SRAMDatasetList():
             self.name += ds.name + "_"
             ds._bg.ndata['_GID'] = torch.ones(ds._bg.num_nodes(), dtype=torch.int) * i
             self.bgList.append(ds._bg)
-            # self.featDictList.append(ds.get_feat_dict())
-            # self.targetList.append(ds._targets)
-            # self.labelList.append(ds.get_labels())
-            ### here we assign nodes' ids used by training/validating ###
-            # if not test_ds:
-            #     train_ids = [i+tot_nodes for i in range(ds._num_d + ds._num_i)]
-            #     val_ids = train_ids
-            #     train_ids.append([i+len(train_ids) for i in ds._train_nids])
-            #     self.nidTrainList.append(train_ids)
-            #     val_ids.append([i+len(val_ids) for i in ds._val_nids])
-            #     self.nidValList.append(val_ids)
-            #     tot_nodes += ds._num_d + ds._num_i +ds._num_n
             self._num_i.append(ds._num_i)
             self._num_d.append(ds._num_d)
             self._num_n.append(ds._num_n)
             self.class_distr += ds._class_num
             self.num_nodes += ds._num_i + ds._num_d + ds._num_n
+            self._tot_num_n += ds._num_n
 
         self.bgs = dgl.batch(self.bgList)
-        # print("bgs ndata:", self.bgs.ndata)
-        # assert 0
-        # # self._bg = dgl.batch(bgList)
         self._d_feat_dim = datasets[0]._d_feat_dim
         self._n_feat_dim = datasets[0]._n_feat_dim
         self._i_feat_dim = datasets[0]._i_feat_dim
@@ -465,19 +412,3 @@ class SRAMDatasetList():
 
     def set_featMax(self, x_max):
         self.featMax = x_max
-
-    # def get_feature_dict(self, blocks):
-    #     # g_n_nums = self.bgs.batch_num_nodes()
-    #     # n_mat = torch.tensor([0, g_n_nums[0], g_n_nums[0]+g_n_nums[1]]).expand(len(nids), 1)
-    #     # nids = torch.tensor(nids).view(-1, 1)
-    #     # n_mat = ((nids - n_mat) >= 0).bool().sum(dim=1)
-    #     # assert all(nids < g_n_nums.sum())
-    #     # gids = n_mat - 1
-    #     # self.featDictList
-    #     feat_dict = {"device": torch.empty((0, self._d_feat_dim)),
-    #                  "inst": torch.empty((0, self._i_feat_dim)),
-    #                  "net": torch.empty((0, self._n_feat_dim))}
-    #     blocks[0].ndata['_GID']
-
-
-

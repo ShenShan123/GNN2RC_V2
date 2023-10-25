@@ -12,7 +12,6 @@ class Hete2HomoLayer(nn.Module):
         self.layers = HeteroMLPLayer(linear_dict, has_l2norm=has_l2norm, has_bn=has_bn,
                                      act=act, dropout=dropout, final_act=False)
         self.proj_dim = linear_dict["net"][-1]
-        self.input_feat_dims = {key: dims[0] for key, dims in linear_dict.items()}
     '''
     def forward(self, shg, h_dict: torch.Tensor) -> torch.Tensor:
         h_dict = self.layers(h_dict)
@@ -48,11 +47,11 @@ class Hete2HomoLayer(nn.Module):
         return trans_h
     '''
 
-    def forward(self, feats: torch.Tensor, ntypes: torch.Tensor) -> torch.Tensor:
+    def forward(self, feats: torch.Tensor, ntypes: torch.Tensor, dim_list: list) -> torch.Tensor:
         ## restore the feats to h_dict with dim_list defining the dim number for each feat type
-        h_dict = {"device": feats[ntypes == 0][:, 0:self.input_feat_dims['device']], 
-                  "inst":feats[ntypes == 1][:, 0:self.input_feat_dims['inst']], 
-                  "net": feats[ntypes == 2][:, 0:self.input_feat_dims['net']]}
+        h_dict = {"device": feats[ntypes == 0][:,0:dim_list[0]], 
+                  "inst":feats[ntypes == 1][:,0:dim_list[1]], 
+                  "net": feats[ntypes == 2][:,0:dim_list[2]]}
         trans_h_dict = self.layers(h_dict)
         h = torch.zeros(feats.shape[0], self.proj_dim, device=feats.device)
         # the node order of h is the same as feats
@@ -67,27 +66,26 @@ class GCN(nn.Module):
         self.layers = nn.ModuleList()
         # 3-layer GCN
         self.layers.append(dgl.nn.GraphConv(in_size, hid_size, activation=F.relu))
-        # self.layers.append(dgl.nn.GraphConv(hid_size, hid_size, activation=F.relu))
+        self.layers.append(dgl.nn.GraphConv(hid_size, hid_size, activation=F.relu))
         self.layers.append(dgl.nn.GraphConv(hid_size, out_size))
         self.dropout = nn.Dropout(dropout)
 
-    def forward(self, blocks, features):
-        h = features
-        for i, layer in enumerate(self.layers):
-            if i != len(self.layers) - 1:
-                h = self.dropout(h)
-            h = layer(blocks[i], h)
-        return h
-    
-    # def forward(self, g, features):
+    # def forward(self, blocks, features):
     #     h = features
     #     for i, layer in enumerate(self.layers):
     #         if i != len(self.layers) - 1:
     #             h = self.dropout(h)
-    #         h = layer(g, h)
+    #         h = layer(blocks[i], h)
     #     return h
+    
+    def forward(self, g, features):
+        h = features
+        for i, layer in enumerate(self.layers):
+            if i != len(self.layers) - 1:
+                h = self.dropout(h)
+            h = layer(g, h)
+        return h
 
-# for regression and classification GAT 3-layer is better than 2-layer version
 class GAT(nn.Module):
     def __init__(self,in_size, hid_size, out_size, heads, feat_drop=0.6, attn_drop=0.6):
         super().__init__()
@@ -95,25 +93,12 @@ class GAT(nn.Module):
         # 3-layer GAT
         self.layers.append(dgl.nn.GATConv(in_size, hid_size, heads[0], feat_drop=feat_drop, attn_drop=attn_drop, activation=F.elu))
         self.layers.append(dgl.nn.GATConv(hid_size*heads[0], hid_size, heads[1], feat_drop=feat_drop, attn_drop=attn_drop, activation=F.elu))
-        self.layers.append(dgl.nn.GATConv(hid_size*heads[0], hid_size, heads[1], feat_drop=feat_drop, attn_drop=attn_drop, activation=F.elu))
         self.layers.append(dgl.nn.GATConv(hid_size*heads[1], out_size, heads[2], feat_drop=feat_drop, attn_drop=attn_drop, activation=None))
         
-    def forward(self, blocks, inputs):
-        h = inputs
-        for i, layer in enumerate(self.layers):
-            h = layer(blocks[i], h)
-            # print(i, "size of h:", h.shape)
-            if i == len(self.layers) - 1:  # last layer 
-                h = h.mean(1)
-            else:       # other layer(s)
-                h = h.flatten(1)
-            # print(i, "size of h:", h.shape)
-        return h
-    
-    # def forward(self, g, inputs):
+    # def forward(self, blocks, inputs):
     #     h = inputs
     #     for i, layer in enumerate(self.layers):
-    #         h = layer(g, h)
+    #         h = layer(blocks[i], h)
     #         # print(i, "size of h:", h.shape)
     #         if i == len(self.layers) - 1:  # last layer 
     #             h = h.mean(1)
@@ -121,6 +106,18 @@ class GAT(nn.Module):
     #             h = h.flatten(1)
     #         # print(i, "size of h:", h.shape)
     #     return h
+    
+    def forward(self, g, inputs):
+        h = inputs
+        for i, layer in enumerate(self.layers):
+            h = layer(g, h)
+            # print(i, "size of h:", h.shape)
+            if i == len(self.layers) - 1:  # last layer 
+                h = h.mean(1)
+            else:       # other layer(s)
+                h = h.flatten(1)
+            # print(i, "size of h:", h.shape)
+        return h
 
 class GATv2(nn.Module):
     def __init__(self,
@@ -204,14 +201,13 @@ class GraphSAGE(nn.Module):
     #     return h
 
 """ initialize the weights in MLP3 """
-def weights_init(m):
-    classname = m.__class__.__name__
-    if classname.find('Linear') != -1:
-        torch.nn.init.normal_(m.weight, 0.0, 0.02)
-    elif classname.find('BatchNorm') != -1:
-        torch.nn.init.normal_(m.weight, 1.0, 0.02)
-        torch.nn.init.zeros_(m.bias)
-
+# def weights_init(m):
+#     classname = m.__class__.__name__
+#     if classname.find('Linear') != -1:
+#         torch.nn.init.normal_(m.weight, 0.0, 0.02)
+#     elif classname.find('BatchNorm') != -1:
+#         torch.nn.init.normal_(m.weight, 1.0, 0.02)
+#         torch.nn.init.zeros_(m.bias)
 
 class MLPLayer(nn.Module):
     def __init__(self, in_dim, out_dim, act, use_bn, has_l2norm, dropout):
@@ -259,21 +255,18 @@ class MLPN(nn.Module):
         h = self.backbone(h)
         return h
 
-
 class NetCapClassifier(nn.Module):
-    def __init__(self, num_classes, proj_dim_dict, gnn_dim_list=[64, 64, 64], 
-                 cmlp_dim_list=[64, 64, 64], gnn='sage-mean',  
-                 has_l2norm=False, has_bn=False, dropout=0.1, 
+    def __init__(self, num_classes, proj_dim_dict, gnn_dim_list=[64, 64, 64], cmlp_dim_list=[64, 64, 64], 
+                 gnn='sage-mean',  has_l2norm=False, has_bn=False, dropout=0.1, 
                  device=torch.device('cuda:0')):
         super(NetCapClassifier, self).__init__()
         self.num_classes = num_classes
         self.layers = nn.ModuleList()
-        self.name = "netcapclassifier"+str(len(proj_dim_dict['net'])-1)+"_"+gnn+"_mlpclass"+ \
+        self.name = "hete2homo"+str(len(proj_dim_dict['net'])-1)+"_"+gnn+"_mlp"+ \
                     str(len(cmlp_dim_list))
         """ feature projection """ 
         self.layers.append(Hete2HomoLayer(proj_dim_dict, act=nn.ReLU(), 
-                                          has_bn=has_bn, has_l2norm=has_l2norm, 
-                                          dropout=dropout).to(device))
+                                          has_bn=has_bn, has_l2norm=has_l2norm, dropout=dropout).to(device))
         self.proj_dim = gnn_dim_list[0]
         """ create GNN model """ 
         if gnn == "gcn":
@@ -282,8 +275,7 @@ class NetCapClassifier(nn.Module):
                                    gnn_dim_list[2], dropout=0.1).to(device))
         elif gnn == "gat":
             self.layers.append(GAT(gnn_dim_list[0], gnn_dim_list[1], gnn_dim_list[2], 
-                                   heads=[1, 1, 1], feat_drop=dropout, 
-                                   attn_drop=dropout).to(device))
+                                   heads=[4, 4, 1], feat_drop=dropout, attn_drop=dropout).to(device))
         # 2-layer graphSAGE for old version
         elif gnn == "sage-mean":
             self.layers.append(GraphSAGE(gnn_dim_list[0], gnn_dim_list[1], gnn_dim_list[2], 1, # change layers
@@ -294,76 +286,31 @@ class NetCapClassifier(nn.Module):
                                          activation=nn.ReLU(), dropout=dropout, 
                                          aggregator_type="pool").to(device))
         """ MLP classifier at the last layer """
-        self.layers.append(MLPN(cmlp_dim_list[0]+self.layers[0].input_feat_dims['net'], 
-                                cmlp_dim_list[1:], self.num_classes, 
+        self.layers.append(MLPN(cmlp_dim_list[0], cmlp_dim_list[1:], self.num_classes, 
                                 act=nn.ReLU(), use_bn=has_bn, has_l2norm=has_l2norm, 
                                 dropout=dropout).to(device))
         
-    def forward(self, blocks):
+    def forward(self, dims, blocks):
         feats = blocks[0].srcdata['x']
         ntypes = blocks[0].srcdata['_TYPE']
-        proj_h = self.layers[0](feats, ntypes)
+        proj_h = self.layers[0](feats, ntypes, dims)
         dst_h = self.layers[1](blocks, proj_h)
-        n_feat = blocks[-1].dstdata['x']
-        n_feat = n_feat[:, 0:self.layers[0].input_feat_dims['net']]
-        net_h = torch.cat([dst_h, n_feat], dim=1)
-        h = self.layers[2](net_h)
-        # prob_t, indices = l.max(dim=1, keepdim=True)
-        return h, dst_h
-
-'''
-class MLPRegressor(nn.Module):
-    def __init__(self, num_classes, reg_dim_list=[64, 128, 128, 64, 1],
-                 has_l2norm=False, has_bn=False, device=torch.device('cuda:0')):
-        super(MLPRegressor, self).__init__()
-        self.num_classes = num_classes
-        self.name = "mlpregressor"+str(len(reg_dim_list)-1)
-        
-        """ MLP regressor """
-        self.reg_layers = nn.ModuleList()
-        for i in range(self.num_classes):
-            # mlp_feats = [64, 128, 128, 64]
-            if i == 0:
-                dropout = 0.5
-            else:
-                dropout = 0.0
-            ## we have changed the input dim
-            self.reg_layers.append(MLPN(reg_dim_list[0], reg_dim_list[1:-1], reg_dim_list[-1], 
-                                        act=nn.ReLU(), use_bn=False, has_l2norm=False, 
-                                        dropout=dropout).to(device))
-    
-    def forward(self, dims, dst_h, l, blocks):
-        n_feat = blocks[-1].dstdata['x']
-        # n_feat = n_feat[blocks[-1].ndata["_TYPE"]["_N"] == 2]
-        n_feat = n_feat[:,0:dims[-1]]
-
-        # l = self.layers[2](dst_h)
+        l = self.layers[2](dst_h)
         prob_t, indices = l.max(dim=1, keepdim=True)
-        h = torch.zeros((l.shape[0], 1), device=blocks[0].device)
-        # net_h = torch.cat([dst_h, n_feat], dim=1)
-        
-        # assert 0
-        for i in range(self.num_classes):
-            regressor = self.reg_layers[i]
-            cmask = indices.squeeze() == i
-            net_h = torch.cat([dst_h[cmask], n_feat[cmask], prob_t[cmask]], dim=1)
-            h[cmask] = regressor(net_h)
-        return h
-'''
+        return l, dst_h
+
 class NetCapRegressor(nn.Module):
-    def __init__(self, proj_dim_dict, gnn_dim_list=[64, 64, 64],
+    def __init__(self, num_classes, proj_dim_dict, gnn_dim_list=[64, 64, 64],
                  reg_dim_list=[64, 128, 128, 64, 1],
-                 gnn='sage-mean',  has_l2norm=False, has_bn=False, dropout=0.1, 
-                 device=torch.device('cuda:0')):
+                 gnn='sage-mean',  has_l2norm=False, has_bn=False, dropout=0.1, device=torch.device('cuda:0')):
         super(NetCapRegressor, self).__init__()
-        # self.num_classes = num_classes
+        self.num_classes = num_classes
         self.layers = nn.ModuleList()
-        self.name = "netcapregressor"+str(len(proj_dim_dict['net'])-1)+"_"+gnn+"_mlp"+ \
+        self.name = "hete2homo"+str(len(proj_dim_dict['net'])-1)+"_"+gnn+"_mlp"+ \
                     "_regmlp"+str(len(reg_dim_list)-1)
         """ feature projection """ 
         self.layers.append(Hete2HomoLayer(proj_dim_dict, act=nn.ReLU(), 
-                                          has_bn=has_bn, has_l2norm=has_l2norm, 
-                                          dropout=dropout).to(device))
+                                          has_bn=has_bn, has_l2norm=has_l2norm, dropout=dropout).to(device))
         self.proj_dim = gnn_dim_list[0]
         """ create GNN model """ 
         if gnn == "gcn":
@@ -372,8 +319,7 @@ class NetCapRegressor(nn.Module):
                                    gnn_dim_list[2], dropout=0.1).to(device))
         elif gnn == "gat":
             self.layers.append(GAT(gnn_dim_list[0], gnn_dim_list[1], gnn_dim_list[2], 
-                                   heads=[1, 1, 1], feat_drop=dropout, 
-                                   attn_drop=dropout).to(device))
+                                   heads=[4, 4, 1], feat_drop=dropout, attn_drop=dropout).to(device))
         # 2-layer graphSAGE for old version
         elif gnn == "sage-mean":
             self.layers.append(GraphSAGE(gnn_dim_list[0], gnn_dim_list[1], gnn_dim_list[2], 1, # change layers
@@ -385,39 +331,19 @@ class NetCapRegressor(nn.Module):
                                          aggregator_type="pool").to(device))
 
         """ MLP regressor """
-        self.layers.append(MLPN(reg_dim_list[0]+self.layers[0].input_feat_dims['net'], 
-                                reg_dim_list[1:-1], reg_dim_list[-1], 
-                                act=nn.ReLU(), use_bn=has_bn, has_l2norm=False, 
-                                dropout=dropout).to(device))
+        self.layers.append(MLPN(proj_dim_dict['net'][0]+gnn_dim_list[-1], reg_dim_list[1:-1], reg_dim_list[0], 
+                                    act=nn.ReLU(), use_bn=has_bn, has_l2norm=False, 
+                                    dropout=dropout).to(device))
     
-    def forward(self, blocks):
+    def forward(self, dims, blocks, cmask):
         # print("blocks[0].srcdata[x]",blocks[0].srcdata['x'])
         feats = blocks[0].srcdata['x']
         ntypes = blocks[0].srcdata['_TYPE']
-        proj_h = self.layers[0](feats, ntypes)
+        proj_h = self.layers[0](feats, ntypes, dims)
         dst_h = self.layers[1](blocks, proj_h)
         n_feat = blocks[-1].dstdata['x']
-        n_feat = n_feat[:, 0:self.layers[0].input_feat_dims['net']]
+        n_feat = n_feat[:,0:dims[-1]]
+        l = None
         net_h = torch.cat([dst_h, n_feat], dim=1)
         h = self.layers[2](net_h)
-        return h
-    
-class NetCapRegressorEnsemble(nn.Module):
-    def __init__(self, num_classes, proj_dim_dict, gnn_dim_list=[64, 64, 64],
-                 reg_dim_list=[64, 128, 128, 64, 1], gnn='sage-mean',  
-                 has_l2norm=False, has_bn=False, dropout=0.1, 
-                 device=torch.device('cuda:0')):
-        super(NetCapRegressorEnsemble, self).__init__()
-        self.layers = nn.ModuleList()
-        self.num_classes = num_classes
-        self.name = "regressorensemle_"+str(num_classes)+"gnnclassifiers"
-        for i in range(num_classes):
-            self.layers.append(NetCapRegressor(proj_dim_dict=proj_dim_dict, 
-                                               gnn=gnn, has_l2norm=has_l2norm, 
-                                               has_bn=has_bn, dropout=dropout, 
-                                               device=device))
-
-    def forward(self, blocks, regIdx):
-        model = self.layers[regIdx]
-        h = model(blocks)
         return h

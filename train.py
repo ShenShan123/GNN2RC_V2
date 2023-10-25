@@ -14,7 +14,7 @@ from datetime import datetime
 import os 
 import matplotlib as mpl
 from regression import validation_caps, ud_loss
-from models import NetCapPredictor
+from models import NetCapRegressor
 import random
 
 def plot_confmat(y_true, y_pred, metrics, pltname):
@@ -282,7 +282,7 @@ if __name__ == '__main__':
     linear_dict = {'device': [dataset._d_feat_dim, 64, 64], 
                    'inst':   [dataset._i_feat_dim, 64, 64], 
                    'net':    [dataset._n_feat_dim, 64, 64]}
-    model = NetCapPredictor(num_classes=dataset._num_classes, proj_dim_dict=linear_dict, 
+    model = NetCapRegressor(num_classes=dataset._num_classes, proj_dim_dict=linear_dict, 
                             gnn='sage-mean', has_l2norm=False, has_bn=False, dropout=0.1, 
                             device=device)
     train(dataset, datasetTest, model, device)

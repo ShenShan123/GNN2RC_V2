@@ -6,16 +6,16 @@ import sklearn.metrics
 from SRAM_dataset_gbatch import SRAMDatasetList
 from focal_loss_pytorch.focalloss import FocalLoss
 # import copy
-from dgl.dataloading import DataLoader
+# from dgl.dataloading import DataLoader
 import dgl
 # from tqdm import tqdm
-import torch.nn.functional as F
+# import torch.nn.functional as F
 from datetime import datetime
 import os 
 import matplotlib as mpl
 from regression import validation_caps, ud_loss, plot_errors
-from models import NetCapPredictor, NetCapRegressor
-import random
+from models import NetCapClassifier, NetCapRegressor, NetCapRegressorEnsemble
+# import random
 
 def plot_confmat(y_true, y_pred, metrics, pltname):
     plt.style.use('seaborn-darkgrid')
@@ -52,63 +52,29 @@ def validation(logits, labels, mask=None, num_classes=5, pltname="conf_matrix_va
 
         indices = torch.argmax(logits, dim=1)
         metrics = {'acc': sklearn.metrics.accuracy_score(labels, indices),
-                   'mcm': sklearn.metrics.multilabel_confusion_matrix(labels, indices, labels=[i for i in range(num_classes)]),
+                   'mcm': sklearn.metrics.multilabel_confusion_matrix(labels, indices, 
+                                                                      labels=[i for i in range(num_classes)]),
                 #    'auc': 0, #sklearn.metrics.roc_auc_score(targets, logits_norm, multi_class='ovr'),
                   }
         # plot_confmat(labels, indices, metrics, pltname)
         return metrics
 
-""" Just use in testing """
-# def evaluation(bg, h_dict, model_list: nn.ModuleList()):
-#     with torch.no_grad():
-#         trans_h = model_list[0](h_dict)#[input_nodes.long()]
-#         dst_h = model_list[1](bg, trans_h)
-#         net_h = dst_h[-h_dict['net'].shape[0]:]
-#         logits = model_list[2](net_h)
-#         return logits, net_h
 
-
-def evaluation_c(dataloader: dgl.dataloading.DataLoader, model: NetCapPredictor, 
+def evaluation_c(dataloader: dgl.dataloading.DataLoader, model: NetCapClassifier, 
                  class_distr: torch.Tensor, pltname, epoch):
-    # l_pred = torch.empty((0,5), dtype=torch.int32, device=dataloader.device)
-    # h_pred = torch.empty((0,1), dtype=torch.float32, device=dataloader.device)
-    # labels = torch.empty((0,1), dtype=torch.int32, device=dataloader.device)
-    # targets = torch.empty((0,1), dtype=torch.float32, device=dataloader.device)
     with torch.no_grad():
         acc = 0
         precisions = torch.zeros((1,model.num_classes))
         recalls = torch.zeros((1, model.num_classes))
         loaderIdx = 0
-        mape = 0
         mcm = torch.zeros((model.num_classes, 2 , 2))
-        mape_max = 0
-        # label_tmp = torch.tensor([[0],[1],[2],[3],[4]])
         for input_nodes, output_nodes, blocks in dataloader:
-            # logits, clogits = model(h_dict, bg)
-            l, h = model([dataset._d_feat_dim, dataset._i_feat_dim, dataset._n_feat_dim],
-                        blocks)
-            # l_pred = torch.cat((l_pred, l), dim=0)
-            # h_pred = torch.cat((h_pred, h), dim=0)
-            labels = blocks[-1].dstdata['label']
-            # targets = blocks[-1].dstdata['y']
             loaderIdx += 1
-            # print("loaderIdx in eval", loaderIdx)
-            metrics = validation(l, labels, num_classes=len(class_distr))
+            h, _ = model(blocks)
+            labels = blocks[-1].dstdata['label']
+            metrics = validation(h, labels, num_classes=len(class_distr))
             acc += metrics['acc']
-            # print("mcm:", metrics["mcm"])
             mcm += torch.tensor(metrics["mcm"])
-            # print("targets:", targets)
-            # print("tar pred:", h)
-            # metrics = validation_caps(h, targets, 0)
-            # mape += metrics['mean_err']
-            # mape_max = max(mape_max, metrics['max_err'])
-            # if loaderIdx % 400 == 0:
-            #     print("labels:", labels.squeeze()[:10])
-            #     print("l pred:", l.argmax(dim=1).squeeze()[:10])
-                # print("targets:", targets.squeeze()[:10])
-                # print("t pred:", h.squeeze()[:10])
-            # assert 0
-        # return l_pred, h_pred, labels, targets
         acc /= loaderIdx
         (tn, fn, tp, fp) = (mcm[:, 0, 0], mcm[:, 1, 0], mcm[:, 1, 1], mcm[:, 0, 1])
         # print("tn, fn, tp, fp", tn, fn, tp, fp)
@@ -118,50 +84,44 @@ def evaluation_c(dataloader: dgl.dataloading.DataLoader, model: NetCapPredictor,
         f1 = 2 * precisions * recalls / (precisions + recalls + 1e-3)
         f1_macro = f1.mean()
         f1_weighted = torch.sum(f1 * class_distr) / class_distr.sum()
-        mape /= loaderIdx
-        return acc, f1_weighted.item(), f1_macro.item(), mape, mape_max
+        return acc, f1_weighted.item(), f1_macro.item()
     
-def evaluation_r(dataloader: dgl.dataloading.DataLoader, model: NetCapPredictor, 
-                 modelr: NetCapRegressor, class_distr: torch.Tensor, pltname, epoch):
+def evaluation_r(dataloader: dgl.dataloading.DataLoader, cmodel: NetCapClassifier, 
+                 modelens: NetCapRegressorEnsemble, class_distr: torch.Tensor, 
+                 pltname, epoch):
     with torch.no_grad():
         acc = 0
-        precisions = torch.zeros((1,model.num_classes))
-        recalls = torch.zeros((1, model.num_classes))
+        precisions = torch.zeros((1,cmodel.num_classes))
+        recalls = torch.zeros((1, cmodel.num_classes))
         loaderIdx = 0
         mape = 0
-        mcm = torch.zeros((model.num_classes, 2 , 2))
+        mcm = torch.zeros((cmodel.num_classes, 2 , 2))
         mape_max = 0
         tar_all = []
         err_all = []
         lab_all = []
         for input_nodes, output_nodes, blocks in dataloader:
-            l, dst_h = model([dataset._d_feat_dim, dataset._i_feat_dim, dataset._n_feat_dim],
-                        blocks)
-            h = modelr([dataset._d_feat_dim, dataset._i_feat_dim, dataset._n_feat_dim],
-                       dst_h, l, blocks)
-            # l_pred = torch.cat((l_pred, l), dim=0)
-            # h_pred = torch.cat((h_pred, h), dim=0)
-            labels = blocks[-1].dstdata['label']
-            lab_all.append(labels)
-            targets = blocks[-1].dstdata['y']
-            tar_all.append(targets)
             loaderIdx += 1
-            metrics = validation(l, labels, num_classes=len(class_distr))
+            h, _ = cmodel(blocks)
+            labels = blocks[-1].dstdata['label'].long()
+            metrics = validation(h, labels, num_classes=len(class_distr))
             acc += metrics['acc']
-            # print("mcm:", metrics["mcm"])
             mcm += torch.tensor(metrics["mcm"])
-            # print("targets:", targets)
-            # print("tar pred:", h)
+            prob_t, l_pred = h.max(dim=1, keepdim=True)
+            lab_all.append(l_pred)
+    
+            ## combine the predicted values hi from the ensemble model into h
+            h = torch.zeros(l_pred.shape, device=l_pred.device)
+            for i, modelr in enumerate(modelens.layers):
+                hi = modelens(blocks, i)
+                cmask = l_pred == i
+                h[cmask] = hi[cmask]
+            targets = blocks[-1].dstdata['y']
             metrics, errors = validation_caps(h, targets, 0)
+            tar_all.append(targets)
             err_all.append(errors)
             mape += metrics['mean_err']
             mape_max = max(mape_max, metrics['max_err'])
-            # if loaderIdx % 400 == 0:
-            #     print("labels:", labels.squeeze()[:10])
-            #     print("l pred:", l.argmax(dim=1).squeeze()[:10])
-            #     print("targets:", targets.squeeze()[:10])
-            #     print("t pred:", h.squeeze()[:10])
-            # assert 0
         acc /= loaderIdx
         (tn, fn, tp, fp) = (mcm[:, 0, 0], mcm[:, 1, 0], mcm[:, 1, 1], mcm[:, 0, 1])
         # print("tn, fn, tp, fp", tn, fn, tp, fp)
@@ -221,26 +181,18 @@ def plot_metric_log(metric_log: dict, name):
     plt.savefig("data/plots/train_log_" + name + ".png", dpi=500, bbox_inches='tight')
     plt.close(fig)
 
-def train(dataset: SRAMDatasetList, datasetTest: SRAMDatasetList, model, modelr, device):
+def train(dataset: SRAMDatasetList, datasetTest: SRAMDatasetList, cmodel, modelens, device):
     start = datetime.now()
-    ### create a dataloader ###
-    # net_ids = dataset.hgs.nodes['net'].data['train_mask'].nonzero()
-    # print("train id:", net_ids)
-    # assert 0
+    """ create a dataloader """
     sampler = dgl.dataloading.MultiLayerFullNeighborSampler(2)
     # sampler = dgl.dataloading.MultiLayerFullNeighborSampler(2) # change for 3-layer graphSAGE
-    # print("train ids:", dataset.bgs.ndata["train_mask"].nonzero())
-    # assert 0
     train_ids = dataset.bgs.ndata["train_mask"].nonzero().squeeze().int().to(device)
     val_ids = dataset.bgs.ndata["val_mask"].nonzero().squeeze().int().to(device)
-    # print("train_ids shape:", train_ids.shape)
-    # print("val_ids shape:", val_ids.shape)
-
     batch_size = 128
-    dataloader = dgl.dataloading.DataLoader(dataset.bgs, train_ids, 
-                                            sampler, batch_size=batch_size, 
-                                            shuffle=True, drop_last=False,
-                                            device=device)
+    dataloader_train = dgl.dataloading.DataLoader(dataset.bgs, train_ids, 
+                                                  sampler, batch_size=batch_size, 
+                                                  shuffle=True, drop_last=False,
+                                                  device=device)
     dataloader_val = dgl.dataloading.DataLoader(dataset.bgs, val_ids, 
                                                 sampler, batch_size=batch_size, 
                                                 shuffle=True, drop_last=False,
@@ -251,135 +203,117 @@ def train(dataset: SRAMDatasetList, datasetTest: SRAMDatasetList, model, modelr,
                                                 shuffle=True, drop_last=False,
                                                 device=device)
 
-    ### other settings ###
-    # train_nids = torch.cat((train_nids, val_nids))
+    """ configuring the optimizer of the gnn classifier """
     loss_fcn1 = FocalLoss(gamma=2, alpha=dataset.alpha)
-    
-    # print("weights:", weights)
-    # print("weights shape:", weights.shape)
-    # assert 0
-    loss_fcn2 = ud_loss
     # loss_fcn = F.cross_entropy
-    optimizer = torch.optim.Adam(model.parameters(), lr=1e-2, weight_decay=5e-4)
-    optimizer_r = torch.optim.Adam(modelr.parameters(), lr=1e-2, weight_decay=5e-4)
-    max_epoch = 500
-    # scheduler = torch.optim.lr_scheduler.CosineAnnealingLR(optimizer, float(max_epoch), 1e-3)
-    alpha_weights = 1.0 / dataset.alpha.expand(batch_size, len(dataset.alpha)).detach().to(device)
-    # # print("weights", alpha_weights[0])
-    alpha_weights = F.softmax(alpha_weights, dim=1)
-    # # print("weights after softmax", alpha_weights2[0])
-    alpha_weights = (1-alpha_weights)**2 
-    print("alpha_weights after gamma", alpha_weights[0])
-    # # assert 0
-    # alpha_weights = alpha_weights.to(device)
-    # best_val_loss = torch.inf
-    # best_test_metrics = {'acc': 0.0, 'f1_macro': 0.0, 'f1_weighted': 0.0}
-    # best_val_metrics = {'acc': 0.0, 'f1_macro': 0.0, 'f1_weighted': 0.0}
-    # best_loss_metrics = {}
-    # bad_count = 0
-    # best_count = 0
-    # patience = 25
-    # test_metrics = {}
-    # val_metrics = {}
+    optimizer = torch.optim.Adam(cmodel.parameters(), lr=1e-3, weight_decay=5e-4)
+    max_epoch = 200
+    scheduler = torch.optim.lr_scheduler.CosineAnnealingLR(optimizer, float(max_epoch), 1e-4)
     metric_log = {'train_loss':[], 'val_f1': [], 'val_acc':[], 
                   'test_epoch':[], 'test_f1':[], 'test_acc':[], 
                   'time': 0.0}
-    print("Training " + model.name + " classifier at " + start.strftime("%d-%m-%Y_%H:%M:%S"))
+    print("Training " + cmodel.name + " classifier at " + start.strftime("%d-%m-%Y_%H:%M:%S"))
     print('Entering training loop...')
 
-    ### training loop ###
+    """ training loop of classifier """
     for epoch in range(max_epoch):
-        model.train()
+        cmodel.train()
         train_loss_c = 0
         loaderIdx = 0
-        
-        # dataset loop
-        for input_nodes, output_nodes, blocks in dataloader:
-            optimizer.zero_grad()
-            l, dst_h = model([dataset._d_feat_dim, dataset._i_feat_dim, dataset._n_feat_dim],
-                         blocks)
-            labels = blocks[-1].dstdata['label'].long()
+        ## minibatch loop
+        for input_nodes, output_nodes, blocks in dataloader_train:
             loaderIdx += 1
-            loss_c = loss_fcn1(l, labels.squeeze()) 
+            optimizer.zero_grad()
+            h, _ = cmodel(blocks)
+            labels = blocks[-1].dstdata['label'].long()
+            loss_c = loss_fcn1(h, labels.squeeze()) 
             train_loss_c += loss_c.item()
             loss_c.backward()
             optimizer.step()
 
-        # scheduler.step()
-        ### do validations and evaluations ###
-        model.eval()
+        scheduler.step()
+        ## do validations and evaluations ###
+        cmodel.eval()
         print('Validating...')
-        acc, f1_weighted, f1_macro, mape, mape_max = evaluation_r(dataloader_val, model, modelr, dataset.class_distr, 
-                                                                  dataset.name+model.name, epoch)
-        print("|| Epoch {:05d} | Loss {:.4f} | class acc {:.2f}%  | class f1_weighted {:.2f} | f1_macro {:.2f} ||"
-            .format(epoch, train_loss_c/loaderIdx,    acc*100,             f1_weighted,             f1_macro))
+        acc, f1_weighted, f1_macro = evaluation_c(dataloader_val, cmodel,
+                                                  dataset.class_distr, 
+                                                  dataset.name+cmodel.name, epoch)
+        print("|| Epoch {:05d} | Loss {:.4f} | class acc {:.2f}%  | class f1_weighted {:.4f} | f1_macro {:.4f} ||"
+            .format(epoch, train_loss_c/loaderIdx,    acc*100,      f1_weighted,             f1_macro))
             
-        # print("|| train/test time {:s}/{:s} | mean error {:.2f}%  | max error {:.2f}% ||"
-        #         .format(str(datetime.now()-start), str(datetime.now()-start), 
-        #                 metrics['mean_err']*100, metrics['max_err']*100))
-        
-        # testing
+        ## testing
         print('Testing...')
-        acc, f1_weighted, f1_macro, mape, mape_max = evaluation_r(dataloader_test, model, modelr, dataset.class_distr, 
-                                                                  datasetTest.name+model.name, epoch)
-        print("|| Test | runtime {:s} | class acc {:.2f}%  | class f1_weighted {:.2f} | f1_macro {:.2f} ||"
-            .format(str(datetime.now()-start), acc*100,      f1_weighted,               f1_macro))
+        acc, f1_weighted, f1_macro_test = evaluation_c(dataloader_test, cmodel, 
+                                                       dataset.class_distr, 
+                                                       datasetTest.name+cmodel.name, epoch)
+        print("|| Test | runtime {:s} | class acc {:.2f}%  | class f1_weighted {:.4f} | f1_macro {:.4f} ||"
+            .format(str(datetime.now()-start), acc*100,      f1_weighted,               f1_macro_test))
 
-        if f1_macro > 0.9:
+        if f1_macro_test > 0.8 or f1_macro_test > 0.8*f1_macro:
             break
 
+    print("Classifier training is finished.")
+
+    """ configuring optimizers of gnn regressors """
     start = datetime.now()
-    print("Training " + modelr.name + " regression at " + start.strftime("%d-%m-%Y_%H:%M:%S"))
+    loss_fcn2 = ud_loss
+    optimizers = []
+    schedulers = []
+    for rmodel in modelens.layers:
+        optimizers.append(torch.optim.Adam(rmodel.parameters(), lr=1e-3, weight_decay=5e-4))
+        schedulers.append(torch.optim.lr_scheduler.CosineAnnealingLR(optimizers[-1], float(max_epoch), 1e-4))
+    print("Training " + modelens.name + " regression at " + start.strftime("%d-%m-%Y_%H:%M:%S"))
     print('Entering training loop...')
-    ### training loop ###
+    ### training loop of regressors ###
     for epoch in range(max_epoch):
-        modelr.train()
+        for rmodel in modelens.layers: 
+            rmodel.train() 
         train_loss_r = 0
         loaderIdx = 0
         
-        # dataset loop
-        for input_nodes, output_nodes, blocks in dataloader:
-            optimizer_r.zero_grad()
-            l, dst_h = model([dataset._d_feat_dim, dataset._i_feat_dim, dataset._n_feat_dim],
-                             blocks)
-            h = modelr([dataset._d_feat_dim, dataset._i_feat_dim, dataset._n_feat_dim],
-                        dst_h.detach(), l.detach(), blocks)
+        ## dataset loop
+        for input_nodes, output_nodes, blocks in dataloader_train:
+            loaderIdx += 1
+            h, _ = cmodel(blocks)
+            prob_t, l_pred = h.detach().max(dim=1, keepdim=True)
             targets = blocks[-1].dstdata['y']
-            weights = alpha_weights[:len(labels)]
-            weights = weights.gather(1,labels)
-            loss_r = loss_fcn2(h, targets, weights=weights)
-            train_loss_r += loss_r.item()
-            loss_r.backward()
-            optimizer_r.step()
+            for i, optimizer in enumerate(optimizers): 
+                optimizer.zero_grad()
+                h = modelens(blocks, i)
+                cmask = (l_pred == i) 
+                ## backpropagation will start only if #samples >= 5
+                if cmask.sum() < 5:
+                    continue
+                # ## add noisy data samples into training set, on 2023-10-16
+                # if cmask.sum()*1.2 < len(cmask) and (~cmask).any():
+                #     rand_idx = (~cmask).squeeze().nonzero().squeeze()
+                #     rand_idx = rand_idx[torch.randperm(len(rand_idx))]
+                #     noise_num = int(cmask.sum()*0.2) 
+                #     rand_idx = rand_idx[:noise_num]
+                #     cmask[rand_idx] = True
 
-        modelr.eval()
+                loss = loss_fcn2(h[cmask], targets[cmask])#, weights=weights[cmask0])
+                # print("loss item:", loss.item(), "tran_loss_r", train_loss_r)
+                train_loss_r += loss.item()
+                loss.backward()
+                optimizer.step()
+
+        for i, scheduler in enumerate(schedulers): 
+            scheduler.step()
+        ## evaluation part
+        for rmodel in modelens.layers: 
+            rmodel.eval() 
         print('Validating...')
-        acc, f1_weighted, f1_macro, mape, mape_max = evaluation_r(dataloader_val, model, modelr, dataset.class_distr, 
-                                                                  dataset.name+model.name, epoch)
-        print("|| Epoch {:05d} | Loss {:.4f} | class acc {:.2f}%  | class f1_weighted {:.2f} | f1_macro {:.2f} | mape {:.2f}% | mape_max {:.2f}% ||"
-              .format(epoch, train_loss_r/loaderIdx,    acc*100,             f1_weighted,             f1_macro,  mape*100, mape_max*100))
+        acc, f1_weighted, f1_macro, mape, mape_max = evaluation_r(dataloader_val, cmodel, modelens, 
+                                                                  dataset.class_distr, 
+                                                                  dataset.name+cmodel.name, epoch)
+        print("|| Epoch {:05d} | Loss {:.4f} | class acc {:.2f}%  | class f1_weighted {:.4f} | f1_macro {:.4f} | mape {:.2f}% | mape_max {:.2f}% ||"
+              .format(epoch, train_loss_r/loaderIdx, acc*100, f1_weighted, f1_macro, mape*100, mape_max*100))
             
-        # testing
+        ## testing
         print('Testing...')
-        acc, f1_weighted, f1_macro, mape, mape_max = evaluation_r(dataloader_test, model, modelr, datasetTest.class_distr, 
-                                                                  datasetTest.name+model.name, epoch)
-        print("|| Test | runtime {:s} | class acc {:.2f}%  | class f1_weighted {:.2f} | f1_macro {:.2f} | mape {:.2f}% | mape_max {:.2f}% ||"
+        acc, f1_weighted, f1_macro, mape, mape_max = evaluation_r(dataloader_test, cmodel, modelens, 
+                                                                  datasetTest.class_distr, 
+                                                                  datasetTest.name+cmodel.name, epoch)
+        print("|| Test | runtime {:s} | class acc {:.2f}%  | class f1_weighted {:.4f} | f1_macro {:.4f} | mape {:.2f}% | mape_max {:.2f}% ||"
               .format(str(datetime.now()-start), acc*100, f1_weighted, f1_macro, mape*100, mape_max*100))
-
-if __name__ == '__main__':
-    # device = torch.device('cuda:6' if torch.cuda.is_available() else 'cpu')
-    device = torch.device('cuda:0') 
-    dataset = SRAMDatasetList(device=device, test_ds=False)
-    datasetTest = SRAMDatasetList(device=device, test_ds=True, featMax=dataset.featMax)
-    # assert 0
-    linear_dict = {'device': [dataset._d_feat_dim, 64, 64], 
-                   'inst':   [dataset._i_feat_dim, 64, 64], 
-                   'net':    [dataset._n_feat_dim, 64, 64]}
-    model = NetCapPredictor(num_classes=dataset._num_classes, proj_dim_dict=linear_dict, 
-                            gnn='sage-mean', has_l2norm=False, has_bn=True, dropout=0.1, 
-                            device=device)
-    modelr = NetCapRegressor(num_classes=dataset._num_classes, 
-                             reg_dim_list=[64+dataset._n_feat_dim+1, 128, 128, 64, 1],
-                             has_l2norm=False, 
-                             has_bn=True, device=device)
-    train(dataset, datasetTest, model, modelr, device)
