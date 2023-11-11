@@ -438,8 +438,8 @@ def updateSubckt(subcktList, subIdx):
         if net.isempty():
            warnings.warn("Empty net: %s, id: %d, subckt: %s, id: %d" 
                             % (net.name, i, subckt.name, subIdx))
-        if re.search("^BL0", net.name):
-            print("net:", net, "in subckt:", subckt.name)
+        # if re.search("^BL0", net.name):
+        #     print("net:", net, "in subckt:", subckt.name)
 
     subckt.scan = False if len(subckt.params) else True
     

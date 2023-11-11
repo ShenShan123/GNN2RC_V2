@@ -184,11 +184,12 @@ def plot_metric_log(metric_log: dict, name):
 def train(dataset: SRAMDatasetList, datasetTest: SRAMDatasetList, cmodel, modelens, device):
     start = datetime.now()
     """ create a dataloader """
-    sampler = dgl.dataloading.MultiLayerFullNeighborSampler(2)
-    # sampler = dgl.dataloading.MultiLayerFullNeighborSampler(2) # change for 3-layer graphSAGE
+    sampler = dgl.dataloading.MultiLayerNeighborSampler([1024, 128, 32]) # change for GAT
+    # # change for num of layers
+    # sampler = dgl.dataloading.MultiLayerFullNeighborSampler(2) 
     train_ids = dataset.bgs.ndata["train_mask"].nonzero().squeeze().int().to(device)
     val_ids = dataset.bgs.ndata["val_mask"].nonzero().squeeze().int().to(device)
-    batch_size = 128
+    batch_size = 32
     dataloader_train = dgl.dataloading.DataLoader(dataset.bgs, train_ids, 
                                                   sampler, batch_size=batch_size, 
                                                   shuffle=True, drop_last=False,
@@ -249,7 +250,7 @@ def train(dataset: SRAMDatasetList, datasetTest: SRAMDatasetList, cmodel, modele
         print("|| Test | runtime {:s} | class acc {:.2f}%  | class f1_weighted {:.4f} | f1_macro {:.4f} ||"
             .format(str(datetime.now()-start), acc*100,      f1_weighted,               f1_macro_test))
 
-        if f1_macro_test > 0.8 or f1_macro_test > 0.8*f1_macro:
+        if f1_macro_test > 0.8 or (f1_macro_test > 0.9*f1_macro and f1_macro_test>0.7 and f1_macro>0.7):
             break
 
     print("Classifier training is finished.")

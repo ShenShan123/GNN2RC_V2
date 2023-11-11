@@ -13,7 +13,7 @@ def constructGraph(structList,
                    edge_dict,
                    data_dict, ### feature data (n for 'net' d for 'device')
                    hier_lvl,  ### the hierarchy level of this subckt
-                #    instName=None
+                   #    instName=None
                    ):
     curInstID = id_dict["inst"]
     subckt = structList[struIdx]
@@ -42,9 +42,6 @@ def constructGraph(structList,
             # the target net cap extracted from spf file
             if len(net.capList):
                 ny = torch.tensor(net.capList.pop(0)).view(-1, 1)
-                # nt = np.array(targets[id_dict["net"]])
-                # if len(net.capList):
-                #     print('cap after pop:', net.capList)
             else :
                 ny = torch.tensor([[-1.0],])
                 raise warnings.warn('No matching net cap!! net: %s subckt:%s'%
@@ -67,9 +64,9 @@ def constructGraph(structList,
             #         c_file.write(line)
             # print("netName:", netName)
 
-            if re.search("VDD", net.name, re.I) or re.search("VSS", net.name, re.I):
-                print("net name: %s nid: %d" % (net.name, globalNtList[j]))
-                assert hier_lvl < 3
+            # if re.search("VDD", net.name, re.I) or re.search("VSS", net.name, re.I):
+            #     print("net name: %s nid: %d" % (net.name, globalNtList[j]))
+            #     assert hier_lvl < 3
 
             id_dict["net"] = id_dict["net"] + 1
 
@@ -105,10 +102,6 @@ def constructGraph(structList,
             d2i_src, d2i_dst = edge_dict['d2i']
             d2i_src.append(globalDvList[l])
             d2i_dst.append(curInstID)
-
-            if globalDvList[l] in [2651785, 2653944, 3422, 2638780]:
-                print("device:", device)
-
             id_dict["device"] = id_dict["device"] + 1
         ### This is an instance of subckt
         else:
@@ -139,7 +132,8 @@ def constructGraph(structList,
                                       subPortIDs, 
                                       edge_dict,
                                       data_dict,
-                                      hier_lvl)
+                                      hier_lvl,
+                                      )
 
             # print('return from subckt: ', 
             #       structList[subStruIdx].name,
@@ -298,6 +292,7 @@ def build_graph(subcktList, subIdx):
     hg.nodes['device'].data['x'] = data_dict["device"]
     hg.nodes['inst'].data['x'] = data_dict["inst"]
     print('hg: ', hg)
+    assert 0
     gFilePath = "/data1/shenshan/SPF_examples_cdlspf/Python_data/" + \
                  subcktList[subIdx].name + ".bi_graph.bin"
     dgl.data.utils.save_graphs(gFilePath, [hg])

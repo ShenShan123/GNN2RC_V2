@@ -21,3 +21,5 @@
     ## remove classification stage -- cuda1 9-20 14:04 pid:19394
     ## only classification stage, 2 classes for net caps, divided by 10fF, perform well, nice testing results
     ## classification and regression, trained alternately, 2 classes, 9-26 pid=45713
+    ## classification and regression, training seperatively, 2 classes 9-28 pid=32576
+    ## gnn classifier + 2 gnn regressors -- perform well on ssram ultra8t

@@ -161,6 +161,16 @@ class SRAMDataset(DGLDataset):
                                                     random_state=42, stratify=self._labels)
             self._bg.ndata['train_mask'][train_nids] = True
             self._bg.ndata['val_mask'][val_nids] = True
+        
+        # get name token ids
+        # self._bg.ndata['tid'] = torch.cat((shg.nodes['device'].data['tid'], 
+        #                                    shg.nodes['inst'].data['tid'],
+        #                                    shg.nodes['net'].data['tid']), dim=0
+        #                                  ).to(torch.int32)
+        # self._bg.ndata['tid_len'] = torch.cat((shg.nodes['device'].data['tid_len'], 
+        #                                    shg.nodes['inst'].data['tid_len'],
+        #                                    shg.nodes['net'].data['tid_len']), dim=0
+        #                                  ).to(torch.int32)
         return
     
     def get_test_mask(self):

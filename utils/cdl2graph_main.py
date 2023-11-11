@@ -96,5 +96,7 @@ if __name__ == '__main__':
     print('Calling findInterNetName...')
     findInterNetName(net_cap_dict, subcktList, topSubIdx, '')
     # assert 0
+    tokenizer = AutoTokenizer.from_pretrained("/data1/shenshan/huggingface_models/all-MiniLM-L6-v2")
+    
     print('Converting to a graph...')
     build_graph(subcktList, topSubIdx)
