@@ -76,7 +76,7 @@ def print_params(model_list: nn.ModuleList()):
         # if name == "layers.1.fc_neigh.weight":
         print(name, ":", params[0])
 
-def classifier_save(model_list: nn.ModuleList(), val_metrics=None, test_metrics=None, epoch=None):
+def classifier_save(model_list: nn.ModuleList(), datasetname, val_metrics=None, test_metrics=None, epoch=None):
     name = '_'.join(model.__class__.__name__ for model in model_list)
     if "GraphSAGE" in name:
         name = name.replace("GraphSAGE", "GraphSAGE_"+model_list[1].layers[0]._aggre_type) 
@@ -84,11 +84,11 @@ def classifier_save(model_list: nn.ModuleList(), val_metrics=None, test_metrics=
         val_results = '_'.join(key+"_{:.2f}".format(val) for key, val in val_metrics.items())
         test_results = '_'.join(key+"_{:.2f}".format(val) for key, val in test_metrics.items())
         # here we remove the saved models with similar results
-        os.system("rm " + "data/models/"+name+"_"+val_results+"_"+test_results+"_[0-9]*")
-        torch.save(model_list, "data/models/"+name+"_"+val_results+
+        os.system("rm " + "data/models/"+datasetname+"_"+name+"_"+val_results+"_"+test_results+"_[0-9]*")
+        torch.save(model_list, "data/models/"+datasetname+"_"+name+"_"+val_results+
                             "_"+test_results+"_"+str(epoch)+".pt")
     else:
-        torch.save(model_list, "data/models/"+name+".pt")
+        torch.save(model_list, "data/models/"+datasetname+"_"+name+".pt")
 
 def plot_metric_log(metric_log: dict, name):
     fig, (ax1, ax2) = plt.subplots(1, 2)
@@ -122,16 +122,11 @@ def train(dataset: SRAMDataset, model_list: nn.ModuleList(), device):
     h_dict = dataset.get_feat_dict()
     labels = dataset.get_labels().to(device)
     # get train/validation split
-    train_nids, val_nids, test_nids = dataset.get_nids()
+    train_nids, val_nids = dataset.get_nids()
     train_nids = torch.cat((train_nids, val_nids))
     id_offset = dataset._num_d + dataset._num_i
     loss_fcn = FocalLoss(gamma=2, alpha=dataset.alpha)
     # loss_fcn = F.cross_entropy
-    optimizer = torch.optim.Adam([{'params' : model.parameters()} for model in model_list], 
-                                 lr=2e-3, weight_decay=5e-4)
-    max_epoch = 500
-    scheduler = torch.optim.lr_scheduler.CosineAnnealingLR(optimizer, float(max_epoch), 2e-4)
-
     best_val_loss = torch.inf
     best_test_metrics = {'acc': 0.0, 'f1_macro': 0.0, 'f1_weighted': 0.0}
     best_val_metrics = {'acc': 0.0, 'f1_macro': 0.0, 'f1_weighted': 0.0}
@@ -143,6 +138,18 @@ def train(dataset: SRAMDataset, model_list: nn.ModuleList(), device):
     name = model_list[1].__class__.__name__
     if name == "GraphSAGE":
         name += "_" + model_list[1].layers[0]._aggre_type
+
+    # 2e-3 for GAT 1e-3 for other classifiers
+    if "GAT" in name:
+        lr_max = 2e-3
+        lr_min = 2e-4
+    else:
+        lr_max = 1e-3
+        lr_min = 1e-4
+    optimizer = torch.optim.Adam([{'params' : model.parameters()} for model in model_list], 
+                                 lr=lr_max, weight_decay=5e-4)
+    max_epoch = 500
+    scheduler = torch.optim.lr_scheduler.CosineAnnealingLR(optimizer, float(max_epoch), lr_min)
 
     metric_log = {'train_loss':[], 'val_f1': [], 'val_acc':[], 
                   'test_epoch':[], 'test_f1':[], 'test_acc':[], 
@@ -178,13 +185,13 @@ def train(dataset: SRAMDataset, model_list: nn.ModuleList(), device):
         metric_log['train_loss'].append(val_loss)
         metric_log['val_acc'].append(metrics['acc'])
         metric_log['val_f1'].append(metrics['f1_macro'])
-        print("|| Epoch {:05d} | Loss {:.4f} | mean accuracy {:.2f}%  | weighted f1 score {:.2f} | f1 macro {:.2f} ||"
+        print("|| Epoch {:05d} | Loss {:.4f} | mean accuracy {:.2f}%  | weighted f1 score {:.4f} | f1 macro {:.4f} ||"
               .format(epoch,     val_loss,     metrics['acc']*100, 
                       metrics['f1_weighted'],  metrics['f1_macro']))
         
         # for ealy stop with 25 patience
         if ((best_val_loss > val_loss) or 
-            (best_val_metrics['f1_macro'] < metrics['f1_macro'])) and (epoch > 50):
+            (best_val_metrics['f1_macro'] < metrics['f1_macro'])) :#and (epoch > 50):
             if (best_val_loss > val_loss):
                 best_loss = val_loss
                 best_loss_epoch = epoch
@@ -199,12 +206,12 @@ def train(dataset: SRAMDataset, model_list: nn.ModuleList(), device):
             test_start = datetime.now()
             logits, _ = evaluation(bg, h_dict, model_list)
             test_metrics = validation(logits, labels, 
-                                      mask=test_nids, pltname=name+"_conf_matrix_eval")
+                                      mask=val_nids, pltname=name+"_conf_matrix_eval")
             metric_log['test_epoch'].append(epoch)
             metric_log['test_acc'].append(test_metrics['acc'])
-            metric_log['test_f1'].append(metrics['f1_macro'])
+            metric_log['test_f1'].append(test_metrics['f1_macro'])
             metric_log['time'] = (datetime.now() - start)
-            print("|| train/test time {:s}/{:s} | mean accuracy {:.2f}%  | weighted f1 score {:.2f} | f1 macro {:.2f} ||"
+            print("|| train/test time {:s}/{:s} | mean accuracy {:.2f}%  | weighted f1 score {:.4f} | f1 macro {:.4f} ||"
                   .format(str(metric_log['time']), str(datetime.now()-test_start), 
                           test_metrics['acc']*100, test_metrics['f1_weighted'], test_metrics['f1_macro']))
             
@@ -213,11 +220,11 @@ def train(dataset: SRAMDataset, model_list: nn.ModuleList(), device):
                 best_test_metrics = test_metrics
                 best_test_epoch = epoch
             
-            if (metrics['f1_macro'] > 0.9 and test_metrics['f1_macro'] > 0.9 and
+            if (metrics['f1_macro'] > 0.7 and test_metrics['f1_macro'] > 0.7 and
                 metrics['acc'] > 0.9 and test_metrics['acc'] > 0.9):
                 best_count += 1
                 model_list_cp = copy.deepcopy(model_list)
-                classifier_save(model_list, metrics, test_metrics, epoch)
+                classifier_save(model_list, dataset.name, metrics, test_metrics, epoch)
             else:
                 best_count = 0
             model_list_cp = copy.deepcopy(model_list)
@@ -232,7 +239,7 @@ def train(dataset: SRAMDataset, model_list: nn.ModuleList(), device):
         plot_metric_log(metric_log, name+'_'+start.strftime("%d-%m-%Y_%H:%M:%S"))
         # end training epoch
     
-    classifier_save(model_list_cp)
+    classifier_save(model_list_cp, dataset.name)
     end_date = datetime.now().strftime("%d-%m-%Y_%H:%M:%S")
     print("|* Min loss epoch:{:d} | loss: {:.4f} | train hours: {:s} | end time:{:s} *|" \
           .format(best_loss_epoch, best_loss, str(metric_log['time']), end_date))

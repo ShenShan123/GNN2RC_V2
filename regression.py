@@ -20,12 +20,15 @@ def plot_errors(x, y, pltname, c):
     plt.close(fig)
 
 def ud_loss(logits, targets, weights=None):
-    mask = (targets != torch.inf) &  (logits != torch.inf) &  (targets != 0.0)
-    logits = torch.squeeze(logits[mask])
-    targets = torch.squeeze(targets[mask])
+    mask = (targets != torch.inf) & (logits != torch.inf) &  (targets != 0.0)
+    logits = logits[mask].squeeze()
+    targets = targets[mask].squeeze()
     diffs = logits - targets
     rel_w = torch.div(diffs, targets)
-    squ_rel_w = torch.square(rel_w)* weights[mask].squeeze()
+    if weights is None:
+        squ_rel_w = torch.square(rel_w)
+    else:
+        squ_rel_w = torch.square(rel_w)* weights[mask].squeeze()
     loss_value = torch.mean(squ_rel_w)
     max_loss, max_i = torch.max(loss_value, dim=0)
     # print('in loss with max loss: logits:{:.4f}, targets:{:.4f}, loss:{:.4f}, with index:{:05d}'
@@ -55,24 +58,24 @@ def evaluation_caps(h, model):
 
 def train_cap(dataset: SRAMDataset, net_h, model: nn.Module(), cmask, category):
     start = datetime.now()
-    train_mask, val_mask, test_mask = dataset.get_masks()
+    train_mask, val_mask = dataset.get_masks()
     if net_h is not None:
         net_h = torch.cat([net_h, dataset._n_feat], dim=1)
     else:
         net_h = dataset._n_feat
     # net_h = dataset._n_feat
-    net_h_test = net_h[test_mask & cmask]
-    net_h = net_h[(train_mask | val_mask) & cmask]
+    net_h_test = net_h[val_mask & cmask]
+    net_h = net_h[train_mask & cmask]
     # we may train samples from multiple classes 
-    targets = dataset.get_targets()[(train_mask | val_mask) & cmask]
-    targets_test = dataset.get_targets()[test_mask & cmask]
+    targets = dataset.get_targets()[(train_mask) & cmask]
+    targets_test = dataset.get_targets()[val_mask & cmask]
     # define train/val samples, loss function and optimizer
     # test_mask = dataset.get_test_mask()
     # here we test only one class 
     # test_mask = test_mask[cmask_train]
     # test_mask = test_mask[cmask_test]
     loss_fcn = ud_loss
-    optimizer = torch.optim.Adam([{'params' : model.parameters()}], lr=2e-3, weight_decay=5e-4)
+    optimizer = torch.optim.Adam([{'params' : model.parameters()}], lr=1e-2, weight_decay=5e-4)
     best_val_loss = torch.inf
     bad_count = 0
     best_epoch = -1
@@ -80,7 +83,7 @@ def train_cap(dataset: SRAMDataset, net_h, model: nn.Module(), cmask, category):
     val_metrics = {}
     patience = 25
     # training loop
-    for epoch in range(500):
+    for epoch in range(400):
         model.train()
         optimizer.zero_grad()
         logits = model(net_h)
@@ -119,9 +122,9 @@ def train_cap(dataset: SRAMDataset, net_h, model: nn.Module(), cmask, category):
             break
 
     print("|* Category:{:d} | Best epoch:{:d} | loss: {:.4f} | # train samples: {:d} | # val samples: {:d} *|" \
-          .format(category, best_epoch, best_val_loss, train_mask.sum(), val_mask.sum()))
+          .format(category, best_epoch, best_val_loss, (train_mask & cmask).sum(), (val_mask & cmask).sum()))
     print("|* validation metrics | mean error {:.2f}% | max error {:.2f}% *|"
           .format(val_metrics['mean_err']*100, val_metrics['max_err']*100))
     print("|* test metrics | mean error {:.2f}% | max error {:.2f}% | #samples: {:d} *|"
-          .format(test_metrics['mean_err']*100, test_metrics['max_err']*100, test_mask.sum()))
+          .format(test_metrics['mean_err']*100, test_metrics['max_err']*100, (val_mask & cmask).sum()))
     return test_metrics

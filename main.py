@@ -1,17 +1,17 @@
 import torch
 import torch.nn as nn
-from models import Hete2HomoLayer, GAT, GATv2, MLP3, GCN, GraphSAGE, MLPN
+from models import Hete2HomoLayer, GAT, GCN, GraphSAGE, MLPN
 from SRAM_dataset import SRAMDataset
 from regression import train_cap
 from classification import train, validation, evaluation
 from datetime import datetime
-from utils.circuits2graph import run_cir2g
+import os
+# from utils.circuits2graph import run_struct2g
 
 
 if __name__ == '__main__':
-    # device = torch.device('cuda:6' if torch.cuda.is_available() else 'cpu')
     device = torch.device('cpu')
-    dataset = SRAMDataset(name='sandwich', raw_dir='/data1/shenshan/RCpred')
+    dataset = SRAMDataset(name='ssram', raw_dir='/data1/shenshan/SPF_examples_cdlspf/Python_data/')
 
     ### feature of instances transform ###
     proj_h_feat = 64
@@ -27,21 +27,22 @@ if __name__ == '__main__':
     for i in range(1):
         """ projection layer model """ 
         model_list = nn.ModuleList()
-        model_list.append(Hete2HomoLayer(linear_dict, act=nn.ReLU(), has_bn=False, has_l2norm=False, dropout=0.1).to(device))
+        model_list.append(Hete2HomoLayer(linear_dict, act=nn.ReLU(), has_bn=False, has_l2norm=True, dropout=0.1).to(device))
 
         """ create GNN model """   
         # model_list.append(GCN(proj_feat, gnn_h_feat, gnn_feat, dropout=0.1).to(device))
-        model_list.append(GAT(proj_feat, gnn_feat, gnn_feat, heads=[4, 4, 1], feat_drop=0.1, attn_drop=0.1).to(device))
+        model_list.append(GAT(proj_feat, gnn_feat, gnn_feat, heads=[1, 1, 1], feat_drop=0.1, attn_drop=0.1).to(device))
         # model_list.append(GATv2(1, proj_feat, gnn_feat, gnn_feat, [4, 4, 1], nn.ReLU(), feat_drop=0.0, attn_drop=0.0, negative_slope=0.2, residual=False).to(device))
-        # model_list.append(GraphSAGE(proj_feat, gnn_h_feat, gnn_feat, 1, activation=nn.ReLU(), dropout=0.1, aggregator_type="mean").to(device))
+        # model_list.append(GraphSAGE(proj_feat, gnn_h_feat, gnn_feat, 1, activation=nn.ReLU(), dropout=0.1, aggregator_type="pool").to(device))
         
         """ MLP model """
-        model_list.append(MLPN(gnn_feat, mlp_feats, out_feat, act=nn.ReLU(), use_bn=True, has_l2norm=False, dropout=0.1).to(device)) 
+        model_list.append(MLPN(gnn_feat, mlp_feats, out_feat, act=nn.ReLU(), use_bn=False, has_l2norm=True, dropout=0.1).to(device)) 
 
         """ model training """
-        train(dataset, model_list, device)
+        print("PID =", os.getpid())
+        # train(dataset, model_list, device)
         # torch.save(model_list, "data/models/"+name+".pt")
-        assert 0
+        # exit()
         # """ models saving """
         # name = '_'.join(model.__class__.__name__ for model in model_list)
         # name = 'sp_8192w/Hete2HomoLayer_GCN_MLPN'
@@ -51,10 +52,17 @@ if __name__ == '__main__':
         # model_name = 'Hete2HomoLayer_GraphSAGE_MLPN_acc_0.99_f1_weighted_0.99_f1_macro_0.98_acc_0.98_f1_weighted_0.99_f1_macro_0.98_242' # sandwich dataset
         # name = 'ultra8T/Hete2HomoLayer_GraphSAGE_MLPN_acc_0.98_f1_weighted_0.98_f1_macro_0.96_acc_0.99_f1_weighted_0.99_f1_macro_0.96_384'
         # model_name = 'Hete2HomoLayer_GraphSAGE_mean_MLPN_acc_1.00_f1_weighted_1.00_f1_macro_0.99_acc_1.00_f1_weighted_1.00_f1_macro_0.99_446' # ultra_8T dataset
-        model_name = "Hete2HomoLayer_GCN_MLPN_acc_0.99_f1_weighted_0.99_f1_macro_0.97_acc_0.99_f1_weighted_0.99_f1_macro_0.96_349" # 
-        
+        # model_name = "Hete2HomoLayer_GCN_MLPN_acc_0.99_f1_weighted_0.99_f1_macro_0.97_acc_0.99_f1_weighted_0.99_f1_macro_0.96_349" # 
+        # model_name = "ssram_Hete2HomoLayer_GCN_MLPN_acc_0.95_f1_weighted_0.96_f1_macro_0.88_acc_0.95_f1_weighted_0.96_f1_macro_0.88_472"
+        # model_name = "ssram_Hete2HomoLayer_GraphSAGE_mean_MLPN_acc_0.98_f1_weighted_0.98_f1_macro_0.93_acc_0.98_f1_weighted_0.98_f1_macro_0.93_465"
+        # model_name = "ssram_Hete2HomoLayer_GraphSAGE_pool_MLPN_acc_0.99_f1_weighted_0.99_f1_macro_0.97_acc_0.99_f1_weighted_0.99_f1_macro_0.97_246"
+        # model_name = "ssram_Hete2HomoLayer_GAT_MLPN_acc_0.93_f1_weighted_0.94_f1_macro_0.83_acc_0.93_f1_weighted_0.94_f1_macro_0.83_499"
+        # model_name = "sram_sp_8192w_Hete2HomoLayer_GAT_MLPN_acc_0.99_f1_weighted_0.99_f1_macro_0.72_acc_0.99_f1_weighted_0.99_f1_macro_0.72_471"
+        # model_name = "ultra_8T_Hete2HomoLayer_GAT_MLPN_acc_0.97_f1_weighted_0.97_f1_macro_0.90_acc_0.97_f1_weighted_0.97_f1_macro_0.90_403"
+        # model_name = "sandwich_Hete2HomoLayer_GAT_MLPN"
+
         # load classifier
-        model_list_ld = torch.load("data/models/"+dataset.name + "/"+model_name+".pt")
+        model_list_ld = torch.load("data/models/"+model_name+".pt")
         # print(model_list_ld)
 
         """ inference the whole nets """
@@ -69,7 +77,7 @@ if __name__ == '__main__':
         if "GraphSAGE" in model_name:
             model_name += "_" + model_list_ld[1].layers[0]._aggre_type
             print(model_list_ld[1].layers[0]._aggre_type)
-        _, _, mask = dataset.get_masks()
+        _, mask = dataset.get_masks()
         metrics = validation(logits, dataset.get_labels(), mask=mask, pltname=model_name+"_conf_matrix_infr")
 
         print("|| inference time {:s} | mean accuracy {:.2f}%  | weighted f1 score {:.2f} | f1 macro {:.2f} ||"
@@ -109,8 +117,10 @@ if __name__ == '__main__':
             model = model_list_c[i]
             # class_mask_train = torch.zeros(net_h.shape[0], dtype=torch.bool)
             # for class_idx in class_merge[i]:
-            class_mask = logits.argmax(dim=1).squeeze() == i
-            # class_mask = dataset.get_labels().squeeze() == i
+            if net_h is not None:
+                class_mask = logits.argmax(dim=1).squeeze() == i
+            else:
+                class_mask = dataset.get_labels().squeeze() == i
             test_metrics = train_cap(dataset, net_h, model, class_mask, i)
             test_mean_err[i] = test_metrics['mean_err']
             test_max_err[i] = test_metrics['max_err']
@@ -118,8 +128,9 @@ if __name__ == '__main__':
         weighted_max_err = test_max_err * class_distr / class_distr.sum()
         print('test_mean_err:', test_mean_err, 'avg:', weighted_err.sum().item())
         print('test_max_err:', test_max_err, 'avg:', weighted_max_err.sum().item())
-        torch.save(model_list_c, "data/models/5_MLPs_gcn_sandwich.pt")
-        assert 0
+        # model_name="ssram_nognn"
+        torch.save(model_list_c, "data/models/"+model_name+"_regressors.pt")
+        exit()
 
         model_list_c = torch.load("data/models/5_MLPs_2.pt")
         print('load the mlp regression models')

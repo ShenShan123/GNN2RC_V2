@@ -39,6 +39,8 @@ class SRAMDataset(DGLDataset):
                                         save_dir=save_dir,
                                         force_reload=force_reload,
                                         verbose=verbose)
+        # self._labels = None
+        # self._bg = None
 
     # no need to download
     def download(self):
@@ -47,149 +49,129 @@ class SRAMDataset(DGLDataset):
 
     # must be implemented
     def process(self):
-        het_g, _ = dgl.load_graphs(self.raw_path + '.bi_graph.bin')
-        het_g = het_g[0].long()
-        """ we use the directed subgraph and filter out the features of dst nodes """
-        shg = het_g
-        (xd_max, xn_max, xi_max) = (None, None, None)
+        het_g, _ = load_graphs(self.raw_path + '.bi_graph.bin')
+        shg = het_g[0].long()
+        """ we use the directed subgraph and filter out the features of dst nodes """ 
         # remove the power pins
         if self.name == "sandwich":
-            shg.remove_nodes(torch.tensor([0, 1, 1425]), ntype='net')
+            # VDD VSS TTVDD
+            shg.remove_nodes(torch.tensor([0, 1, 1422]), ntype='net')
         elif self.name == "ultra_8T":
-            shg.remove_nodes(torch.tensor([0, 1]), ntype='net')
+            # VDD VSS SRMVDD
+            shg.remove_nodes(torch.tensor([0, 1, 377]), ntype='net')
         elif self.name == "sram_sp_8192w":
+            # VSSE VDDCE VDDPE
             shg.remove_nodes(torch.tensor([0, 1, 2]), ntype='net')
-        elif self.name == "array_128_32_8t" or self.name == "8T_digitized_timing_top_fast":
-            # These are collected from ultra8T features
-            xd_max= torch.tensor([1.2800e+02, 1.2800e+02, 1.2800e+02, 1.2800e+02, 2.4000e-06, 2.0000e-06,
-                            2.0000e+00, 2.0000e-06, 1.7400e-04, 4.0000e+01, 2.8000e+02, 1.0500e-05,
-                            torch.inf, torch.inf,  torch.inf, 4.0000e+00, 4.0000e+00], dtype=torch.float64)
-            xn_max = torch.tensor([1.0658e+05, 5.0180e+04, 9.6860e+04, 1.0644e+05, 3.7819e-02, 6.9600e-04,
-                                    2.0000e+00, 4.0000e-06, 1.7400e-04, 4.1000e+01, 8.1600e+03, 3.3000e-04,
-                                    torch.inf, torch.inf, torch.inf, 4.5845e+04], dtype=torch.float64)
-            xi_max = torch.tensor([2.4279e+03, 4.4988e+02, 2.9269e+03, 8.7500e-01], dtype=torch.float64)
-            # These are collected from sandwich features
-            # xd_max= torch.tensor([5.0000e+00, 5.0000e+00, 5.0000e+00, 5.0000e+00, 3.0000e-06, 1.0000e-06,
-            #                 torch.inf, torch.inf, torch.inf, torch.inf, torch.inf, torch.inf,
-            #                 torch.inf, torch.inf, torch.inf, 4.0000e+00, 1.0000e+00], dtype=torch.float64)
-            # xn_max= torch.tensor([6.2740e+04, 5.0180e+04, 1.2560e+04, torch.inf, 1.2630e-03, 1.5061e-03,
-            #                 torch.inf, torch.inf, torch.inf, torch.inf, torch.inf,torch.inf,
-            #                 torch.inf, torch.inf, torch.inf, 5.4140e+04], dtype=torch.float64)
-            # xi_max= torch.tensor([2.4279e+03, 2.9988e+02, 2.9269e+03, 8.7500e-01], dtype=torch.float64)
+        elif self.name == "ssram":
+            # VDD VSS VVDD
+            shg.remove_nodes(torch.tensor([0, 1, 352]), ntype='net')
+        elif self.name == "array_128_32_8t":
+            shg.remove_nodes(torch.tensor([0, 1]), ntype='net')
+        elif self.name == "8T_digitized_timing_top_fast":
+            shg.remove_nodes(torch.tensor([0, 1]), ntype='net')
+        else:
+            raise Exception("No dataset named %s" % self.name)
 
+        # mask out the 0.0 and nan targets
+        # print("y:", shg.nodes['net'].data['y'].squeeze())
+        zero_nids = (shg.nodes['net'].data['y'].squeeze() <= 0.0).bool()
+        zero_nids |= (shg.nodes['net'].data['x'].sum(dim=1) <= 0.0).bool()
+        # print("sum x:", shg.nodes['net'].data['x'].sum(dim=1))
+        shg.remove_nodes(zero_nids.nonzero().squeeze(), ntype='net')
+        
         self._num_n = shg.num_nodes('net')
         self._num_d = shg.num_nodes('device')
         self._num_i = shg.num_nodes('inst')
         print('load graph', self.name, 'from', self.raw_path)
-        print(shg)
-        print('shg.num_nodes:', shg.num_nodes())
+        print('num of zero cap indeces:', len(zero_nids.nonzero()))
+        print('num_n %d, num_d %d, num_i %i' % (self._num_n, self._num_d, self._num_i))
+        print('total node num:', shg.num_nodes())
         print('shg.ntypes:', shg.ntypes)
         print('shg.etypes:', shg.etypes)
         # for comparison 
         print('shg.num_edges:', shg.num_edges('device-net'))
         # shg = dgl.edge_subgraph(het_g, {('device', 'device-net', 'net'): torch.tensor(range(het_g.num_edges('device-net')))})
-        # print(shg)
-        
+
         """ to bidirected homogeneous graph """
         g = dgl.to_homogeneous(shg)
         print('original NID in g:', g.ndata[dgl.NTYPE])
         # print('g.num_edges:', g.num_edges())
         # print('g.edges:', g.edges(form='all'))
         g = g.int()
-        bg = dgl.to_bidirected(g, copy_ndata=False)
+        self._bg = dgl.to_bidirected(g, copy_ndata=False)
+        self._hg = shg
+        # self._bg = dgl.reorder_graph(bg)
         
-        self._bg = dgl.reorder_graph(bg)
-        # self._shg = shg
-
-        # normalize the feature with the maximum values
-        def feat_norm(x, x_max=None, x_min=None):
-            if len(x) < 1:
-                return x
+        def feat_norm(x):
+                x_max, _ = x.max(dim=0)
+                x_max[x_max == 0.0] = torch.inf
+                x_norm = x / x_max.expand(x.shape[0], -1)
+                return x_norm.float()
         
-            if x_min is None:
-                # bug to be fixed
-                x = x - x.min()
-                # print("x_min=", x.min())
-            else:
-                x = x - x_min
-
-            if x_max is None:
-                x_max, max_idx = torch.max(x, 0)
-                x_max[(x_max == 0.0)] = torch.inf
-                # print("x_max=", x_max)
-                x_norm = x / x_max.expand(x.shape[0], -1)
-            else:
-                x_norm = x / x_max.expand(x.shape[0], -1)
-            
-            return x_norm
-            
         ### prepare the feature dict ###
-        self._d_feat = feat_norm(shg.nodes['device'].data['x'][:, :-1],xd_max).float()
+        # delete the dummy features in device nodes
+        if shg.nodes['device'].data['x'].shape[1] > 15:
+            # print("self._d_feat shape", self._d_feat.shape)
+            self._d_feat = torch.cat((shg.nodes['device'].data['x'][:, 0].view(-1, 1), 
+                                      shg.nodes['device'].data['x'][:, 4:-1]), dim=1)
+            self._d_feat = feat_norm(self._d_feat)
+        else:
+            self._d_feat = feat_norm(shg.nodes['device'].data['x'][:, :-1])
         self._d_feat_dim = self._d_feat.shape[1]
-        self._n_feat = feat_norm(shg.nodes['net'].data['x'][:, :-1], xn_max).float()
+        assert self._d_feat_dim == 14
+
+        self._n_feat = feat_norm(shg.nodes['net'].data['x'][:, :-1])
         self._n_feat_dim = self._n_feat.shape[1]
-        self._i_feat = feat_norm(shg.nodes['inst'].data['x'], xi_max).float()
+        self._i_feat = feat_norm(shg.nodes['inst'].data['x'].float())
         self._i_feat_dim = self._i_feat.shape[1]
-        
+
         ### prepare the labels ###
         self._targets = shg.nodes['net'].data['y'].float() * 1000
         self.plot_targets()
-        # mask out the 0.0 and nan targets
-        zero_mask = (self._targets == 0.0) | self._targets.isnan()
-        max_l, max_i = torch.max(self._targets[~zero_mask], dim=0)
-        min_l, min_i = torch.min(self._targets[~zero_mask], dim=0)
+        max_l, max_i = torch.max(self._targets, dim=0)
+        min_l, min_i = torch.min(self._targets, dim=0)
         print('targets size:', self._targets.shape) 
         print('max labels:{:.2f} with index:{:d}; min labels:{:.2f} with index:{:d}'
               .format(max_l.item(), max_i.item(), min_l.item(),min_i.item()))
-        print('num of zero cap indeces:', zero_mask.squeeze().sum().item())
         # classificating according to the magnitude of the net capacitance
         self._num_classes = 5
         self._labels = None
-        # here we remove the net with 0.0 cap (invalid data samples)
-        nids = torch.nonzero(~zero_mask.squeeze()).squeeze().tolist()
-        if self.name == "array_128_32_8t" or self.name == "8T_digitized_timing_top_fast":
+        self.get_labels()
+        
+        ### set the training and testing masks ###
+        nids = [i for i in range(self._num_n)]
+        if (self.name == "array_128_32_8t" or self.name == "8T_digitized_timing_top_fast"):
             pass
         else:
-            self.get_labels()
-            ### set the training and testing masks ###
-            train_nids, self._test_nids = train_test_split(nids, test_size=0.2, 
-                                                random_state=42, stratify=self._labels[nids])
-            self._train_nids, self._val_nids = train_test_split(train_nids, test_size=0.25, 
-                                                random_state=22, stratify=self._labels[train_nids])
+            labels = self._labels
+            for i, class_num in enumerate(self._class_num):
+                if class_num < 2:
+                    labels[labels == i] = i-1
+
+            self._train_nids, self._val_nids = train_test_split(nids, test_size=0.2, 
+                                                random_state=42, stratify=labels)
+            # self._train_nids, self._val_nids = train_test_split(nids, test_size=0.25, 
+            #                                     random_state=22, stratify=self._labels[train_nids])
             
-            self._test_mask = torch.zeros(self._num_n, dtype=torch.bool)
+            # self._test_mask = torch.zeros(self._num_n, dtype=torch.bool)
             self._train_mask = torch.zeros(self._num_n, dtype=torch.bool)
             self._val_mask = torch.zeros(self._num_n, dtype=torch.bool)
-            self._test_mask[self._test_nids] = True
+            # self._test_mask[self._test_nids] = True
             self._train_mask[self._train_nids] = True
             self._val_mask[self._val_nids] = True
-            print('# of train/val/test samples:{:d}/{:d}/{:d}'
-                .format(len(self._train_nids), len(self._val_nids), len(self._test_nids)))
+            print('# of train/val samples:{:d}/{:d}'
+                  .format(len(self._train_nids), len(self._val_nids)))#, len(self._test_nids)))
         return
-
-    def get_val_mask(self, test_mask):
-        perm = torch.randperm(test_mask.shape[0])
-        num_train = int(test_mask.shape[0] * 0.8)
-        # print('test_mask shape:', test_mask.shape, 'num_train:', num_train)
-        # 20% target nodes remain to be validated
-        train_mask = torch.zeros(test_mask.shape[0], dtype=torch.bool)
-        val_mask = torch.zeros(test_mask.shape[0], dtype=torch.bool)
-        train_mask |= ~test_mask
-        val_mask |= train_mask
-        train_mask[perm[num_train:]] = False
-        val_mask[perm[:num_train]] = False
-        # print('train_mask:', train_mask)
-        return val_mask, train_mask
     
     def get_test_mask(self):
         return self._test_mask
     
     def get_masks(self):
-        return self._train_mask, self._val_mask, self._test_mask
+        return self._train_mask, self._val_mask #, self._test_mask
     
     def get_nids(self):
         # return torch.tensor(self._train_nids, dtype=torch.int32), torch.tensor(self._val_nids, dtype=torch.int32), torch.tensor(self._test_nids, dtype=torch.int32)
-        return torch.tensor(self._train_nids, dtype=torch.int64), torch.tensor(self._val_nids, dtype=torch.int64), torch.tensor(self._test_nids, dtype=torch.int64)
+        return torch.tensor(self._train_nids, dtype=torch.int64), torch.tensor(self._val_nids, dtype=torch.int64)#, torch.tensor(self._test_nids, dtype=torch.int64)
     
     def get_feat_dict(self):
         return {'device': self._d_feat, 'inst': self._i_feat, 'net': self._n_feat}
@@ -213,9 +195,13 @@ class SRAMDataset(DGLDataset):
             index = (targets >= binedges[i]) & (targets < binedges[i+1])
             labels[index] = i
             class_num.append(torch.sum(index.squeeze()).item())
+            # avoid zero denominator
+            if class_num[-1] == 0:
+                class_num[-1] = 1
+
         
         self._labels = labels.long()
-        
+        self._class_num = torch.tensor(class_num)
         print('class distribution:', class_num)
         # assert 0
         class_distr = torch.tensor([self._num_n / item for item in class_num])
